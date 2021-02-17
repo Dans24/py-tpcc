@@ -105,23 +105,6 @@ class Loader:
         w_tuples = [ self.generateWarehouse(w_id) ]
         self.handle.loadTuples(constants.TABLENAME_WAREHOUSE, w_tuples)
 
-        ## Select 10% of the stock to be marked "original"
-        s_tuples = [ ]
-        selectedRows = rand.selectUniqueIds(self.scaleParameters.items / 10, 1, self.scaleParameters.items)
-        total_tuples = 0
-        for i_id in range(1, self.scaleParameters.items+1):
-            original = (i_id in selectedRows)
-            s_tuples.append(self.generateStock(w_id, i_id, original))
-            if len(s_tuples) >= self.batch_size:
-                logging.debug("LOAD - %s [W_ID=%d]: %5d / %d" % (constants.TABLENAME_STOCK, w_id, total_tuples, self.scaleParameters.items))
-                self.handle.loadTuples(constants.TABLENAME_STOCK, s_tuples)
-                s_tuples = [ ]
-            total_tuples += 1
-        ## FOR
-        if len(s_tuples) > 0:
-            logging.debug("LOAD - %s [W_ID=%d]: %5d / %d" % (constants.TABLENAME_STOCK, w_id, total_tuples, self.scaleParameters.items))
-            self.handle.loadTuples(constants.TABLENAME_STOCK, s_tuples)
-
     ## ==============================================
     ## loadDistricts
     ## ==============================================
@@ -131,14 +114,10 @@ class Loader:
         ## DISTRICT
         d_tuples = [ ]
         for d_id in range(1, self.scaleParameters.districtsPerWarehouse+1):
-            d_next_o_id = self.scaleParameters.customersPerDistrict + 1
-            d_tuples = [ self.generateDistrict(w_id, d_id, d_next_o_id) ]
+            d_tuples = [ self.generateDistrict(w_id, d_id) ]
             
             c_tuples = [ ]
             h_tuples = [ ]
-            
-            ## Select 10% of the customers to have bad credit
-            selectedRows = rand.selectUniqueIds(self.scaleParameters.customersPerDistrict / 10, 1, self.scaleParameters.customersPerDistrict)
             
             ## TPC-C 4.3.3.1. says that o_c_id should be a permutation of [1, 3000]. But since it
             ## is a c_id field, it seems to make sense to have it be a permutation of the
@@ -146,8 +125,7 @@ class Loader:
             cIdPermutation = [ ]
 
             for c_id in range(1, self.scaleParameters.customersPerDistrict+1):
-                badCredit = (c_id in selectedRows)
-                c_tuples.append(self.generateCustomer(w_id, d_id, c_id, badCredit, True))
+                c_tuples.append(self.generateCustomer(w_id, d_id, c_id, True))
                 h_tuples.append(self.generateHistory(w_id, d_id, c_id))
                 cIdPermutation.append(c_id)
             ## FOR
@@ -161,25 +139,25 @@ class Loader:
             
             for o_id in range(1, self.scaleParameters.customersPerDistrict+1):
                 o_ol_cnt = rand.number(constants.MIN_OL_CNT, constants.MAX_OL_CNT)
-                
+                o_entry_d = datetime.now()
                 ## The last newOrdersPerDistrict are new orders
                 newOrder = ((self.scaleParameters.customersPerDistrict - self.scaleParameters.newOrdersPerDistrict) < o_id)
-                o_tuples.append(self.generateOrder(w_id, d_id, o_id, cIdPermutation[o_id - 1], o_ol_cnt, newOrder))
+                o_tuples.append(self.generateOrder(o_entry_d, w_id, d_id, cIdPermutation[o_id - 1]))
 
                 ## Generate each OrderLine for the order
                 for ol_number in range(0, o_ol_cnt):
-                    ol_tuples.append(self.generateOrderLine(w_id, d_id, o_id, ol_number, self.scaleParameters.items, newOrder))
+                    ol_tuples.append(self.generateOrderLine(o_entry_d, w_id, d_id, ol_number, self.scaleParameters.items))
                 ## FOR
 
-                ## This is a new order: make one for it
-                if newOrder: no_tuples.append([o_id, d_id, w_id])
+                ## This is not a new order: make a delivery
+                if not newOrder: no_tuples.append(self.generateDelivery(w_id))
             ## FOR
             
             self.handle.loadTuples(constants.TABLENAME_DISTRICT, d_tuples)
             self.handle.loadTuples(constants.TABLENAME_CUSTOMER, c_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDERS, o_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDER_LINE, ol_tuples)
-            self.handle.loadTuples(constants.TABLENAME_NEW_ORDER, no_tuples)
+            self.handle.loadTuples(constants.TABLENAME_DELIVERY, no_tuples)
             self.handle.loadTuples(constants.TABLENAME_HISTORY, h_tuples)
             self.handle.loadFinishDistrict(w_id, d_id)
         ## FOR
@@ -205,25 +183,23 @@ class Loader:
     ## ==============================================
     def generateWarehouse(self, w_id):
         w_tax = self.generateTax()
-        w_ytd = constants.INITIAL_W_YTD
         w_address = self.generateAddress()
-        return [w_id] + w_address + [w_tax, w_ytd]
+        return [w_id] + w_address + [w_tax]
     ## DEF
 
     ## ==============================================
     ## generateDistrict
     ## ==============================================
-    def generateDistrict(self, d_w_id, d_id, d_next_o_id):
+    def generateDistrict(self, d_w_id, d_id):
         d_tax = self.generateTax()
-        d_ytd = constants.INITIAL_D_YTD
         d_address = self.generateAddress()
-        return [d_id, d_w_id] + d_address + [d_tax, d_ytd, d_next_o_id]
+        return [d_id, d_w_id] + d_address + [d_tax]
     ## DEF
 
     ## ==============================================
     ## generateCustomer
     ## ==============================================
-    def generateCustomer(self, c_w_id, c_d_id, c_id, badCredit, doesReplicateName):
+    def generateCustomer(self, c_w_id, c_d_id, c_id, doesReplicateName):
         c_first = rand.astring(constants.MIN_FIRST, constants.MAX_FIRST)
         c_middle = constants.MIDDLE
 
@@ -235,13 +211,7 @@ class Loader:
 
         c_phone = rand.nstring(constants.PHONE, constants.PHONE)
         c_since = datetime.now()
-        c_credit = constants.BAD_CREDIT if badCredit else constants.GOOD_CREDIT
-        c_credit_lim = constants.INITIAL_CREDIT_LIM
         c_discount = rand.fixedPoint(constants.DISCOUNT_DECIMALS, constants.MIN_DISCOUNT, constants.MAX_DISCOUNT)
-        c_balance = constants.INITIAL_BALANCE
-        c_ytd_payment = constants.INITIAL_YTD_PAYMENT
-        c_payment_cnt = constants.INITIAL_PAYMENT_CNT
-        c_delivery_cnt = constants.INITIAL_DELIVERY_CNT
         c_data = rand.astring(constants.MIN_C_DATA, constants.MAX_C_DATA)
 
         c_street1 = rand.astring(constants.MIN_STREET, constants.MAX_STREET)
@@ -252,28 +222,22 @@ class Loader:
 
         return [ c_id, c_d_id, c_w_id, c_first, c_middle, c_last, \
                 c_street1, c_street2, c_city, c_state, c_zip, \
-                c_phone, c_since, c_credit, c_credit_lim, c_discount, c_balance, \
-                c_ytd_payment, c_payment_cnt, c_delivery_cnt, c_data ]
+                c_phone, c_since, c_discount, c_data ]
     ## DEF
 
     ## ==============================================
     ## generateOrder
     ## ==============================================
-    def generateOrder(self, o_w_id, o_d_id, o_id, o_c_id, o_ol_cnt, newOrder):
-        """Returns the generated o_ol_cnt value."""
-        o_entry_d = datetime.now()
-        o_carrier_id = constants.NULL_CARRIER_ID if newOrder else rand.number(constants.MIN_CARRIER_ID, constants.MAX_CARRIER_ID)
-        o_all_local = constants.INITIAL_ALL_LOCAL
-        return [ o_id, o_c_id, o_d_id, o_w_id, o_entry_d, o_carrier_id, o_ol_cnt, o_all_local ]
+    def generateOrder(self, o_entry_d, o_w_id, o_d_id, o_c_id):
+        return [ o_entry_d, o_d_id, o_w_id, o_c_id ]
     ## DEF
 
     ## ==============================================
     ## generateOrderLine
     ## ==============================================
-    def generateOrderLine(self, ol_w_id, ol_d_id, ol_o_id, ol_number, max_items, newOrder):
+    def generateOrderLine(self, ol_entry_d, ol_w_id, ol_d_id, ol_number, max_items):
         ol_i_id = rand.number(1, max_items)
         ol_supply_w_id = ol_w_id
-        ol_delivery_d = datetime.now()
         ol_quantity = constants.INITIAL_QUANTITY
 
         ## 1% of items are from a remote warehouse
@@ -282,36 +246,18 @@ class Loader:
             ol_supply_w_id = rand.numberExcluding(self.scaleParameters.starting_warehouse,
                                                   self.scaleParameters.ending_warehouse,
                                                   ol_w_id)
-
-        if newOrder == False:
-            ol_amount = 0.00
-        else:
-            ol_amount = rand.fixedPoint(constants.MONEY_DECIMALS, constants.MIN_AMOUNT, constants.MAX_PRICE * constants.MAX_OL_QUANTITY)
-            ol_delivery_d = None
         ol_dist_info = rand.astring(constants.DIST, constants.DIST)
 
-        return [ ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_delivery_d, ol_quantity, ol_amount, ol_dist_info ]
+        return [ ol_entry_d, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info ]
     ## DEF
 
     ## ==============================================
-    ## generateStock
+    ## generateDelivery
     ## ==============================================
-    def generateStock(self, s_w_id, s_i_id, original):
-        s_quantity = rand.number(constants.MIN_QUANTITY, constants.MAX_QUANTITY);
-        s_ytd = 0;
-        s_order_cnt = 0;
-        s_remote_cnt = 0;
-
-        s_data = rand.astring(constants.MIN_I_DATA, constants.MAX_I_DATA);
-        if original: self.fillOriginal(s_data)
-
-        s_dists = [ ]
-        for i in range(0, constants.DISTRICTS_PER_WAREHOUSE):
-            s_dists.append(rand.astring(constants.DIST, constants.DIST))
-        
-        return [ s_i_id, s_w_id, s_quantity ] + \
-               s_dists + \
-               [ s_ytd, s_order_cnt, s_remote_cnt, s_data ]
+    def generateDelivery(self, dl_w_id):
+        dl_delivery_d = datetime.now()
+        o_carrier_id = rand.number(constants.MIN_CARRIER_ID, constants.MAX_CARRIER_ID)
+        return [ dl_delivery_d, dl_w_id, o_carrier_id ]
     ## DEF
 
     ## ==============================================

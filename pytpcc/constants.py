@@ -66,7 +66,6 @@ STOCK_PER_WAREHOUSE = 100000
 #  District constants
 DISTRICTS_PER_WAREHOUSE = 10
 INITIAL_D_YTD = 30000.00  #  different from Warehouse
-INITIAL_NEXT_O_ID = 3001
 
 #  Customer constants
 CUSTOMERS_PER_DISTRICT = 3000
@@ -117,10 +116,6 @@ INITIAL_NEW_ORDERS_PER_DISTRICT = 900
 #  TPC-C 2.4.3.4 (page 31) says this must be displayed when new order rolls back.
 INVALID_ITEM_MESSAGE = "Item number is not valid"
 
-#  Used to generate stock level transactions
-MIN_STOCK_LEVEL_THRESHOLD = 10
-MAX_STOCK_LEVEL_THRESHOLD = 20
-
 #  Used to generate payment transactions
 MIN_PAYMENT = 1.0
 MAX_PAYMENT = 5000.0
@@ -129,26 +124,24 @@ MAX_PAYMENT = 5000.0
 ORIGINAL_STRING = "ORIGINAL"
 
 # Table Names
-TABLENAME_ITEM       = "ITEM"
-TABLENAME_WAREHOUSE  = "WAREHOUSE"
-TABLENAME_DISTRICT   = "DISTRICT"
-TABLENAME_CUSTOMER   = "CUSTOMER"
-TABLENAME_STOCK      = "STOCK"
-TABLENAME_ORDERS     = "ORDERS"
-TABLENAME_NEW_ORDER  = "NEW_ORDER"
-TABLENAME_ORDER_LINE = "ORDER_LINE"
-TABLENAME_HISTORY    = "HISTORY"
+TABLENAME_ITEM       = "item"
+TABLENAME_WAREHOUSE  = "warehouse"
+TABLENAME_DISTRICT   = "district"
+TABLENAME_CUSTOMER   = "customer"
+TABLENAME_ORDERS     = "orders"
+TABLENAME_ORDER_LINE = "order_line"
+TABLENAME_HISTORY    = "history"
+TABLENAME_DELIVERY   = "delivery"
 
 ALL_TABLES = [
     TABLENAME_ITEM,
     TABLENAME_WAREHOUSE,
     TABLENAME_DISTRICT,
     TABLENAME_CUSTOMER,
-    TABLENAME_STOCK,
     TABLENAME_ORDERS,
-    TABLENAME_NEW_ORDER,
     TABLENAME_ORDER_LINE,
     TABLENAME_HISTORY,
+    TABLENAME_DELIVERY,
 ]
 
 # Transaction Types
@@ -159,7 +152,5 @@ def enum(*sequential, **named):
 TransactionTypes = enum(
     "DELIVERY",
     "NEW_ORDER",
-    "ORDER_STATUS",
     "PAYMENT",
-    "STOCK_LEVEL",
 )

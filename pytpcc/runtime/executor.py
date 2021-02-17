@@ -89,19 +89,15 @@ class Executor:
         ## This is not strictly accurate: The requirement is for certain
         ## *minimum* percentages to be maintained. This is close to the right
         ## thing, but not precisely correct. See TPC-C 5.2.4 (page 68).
-        x = rand.number(1, self.txnprob[4])
+        x = rand.number(1, self.txnprob[2])
         params = None
         txn = None
         if x <= self.txnprob[0]: ## 4%
-            txn, params = (constants.TransactionTypes.STOCK_LEVEL, self.generateStockLevelParams())
-        elif x <= self.txnprob[1]: ## 4%
             txn, params = (constants.TransactionTypes.DELIVERY, self.generateDeliveryParams())
-        elif x <= self.txnprob[2]: ## 4%
-            txn, params = (constants.TransactionTypes.ORDER_STATUS, self.generateOrderStatusParams())
-        elif x <= self.txnprob[3]: ## 43%
+        elif x <= self.txnprob[1]: ## 47%
             txn, params = (constants.TransactionTypes.PAYMENT, self.generatePaymentParams())
-        else: ## 45%
-            assert x > self.txnprob[3]
+        else: ## 49%
+            assert x > self.txnprob[1]
             txn, params = (constants.TransactionTypes.NEW_ORDER, self.generateNewOrderParams())
         
         return (txn, params)
@@ -135,6 +131,8 @@ class Executor:
         i_ids = [ ]
         i_w_ids = [ ]
         i_qtys = [ ]
+        i_dist_info = [ ]
+
         for i in range(0, ol_cnt):
             if rollback and i + 1 == ol_cnt:
                 i_ids.append(self.scaleParameters.items + 1)
@@ -152,9 +150,10 @@ class Executor:
                 i_w_ids.append(w_id)
 
             i_qtys.append(rand.number(1, constants.MAX_OL_QUANTITY))
+            i_dist_info.append(rand.astring(constants.DIST, constants.DIST))
         ## FOR
 
-        return makeParameterDict(locals(), "w_id", "d_id", "c_id", "o_entry_d", "i_ids", "i_w_ids", "i_qtys")
+        return makeParameterDict(locals(), "w_id", "d_id", "c_id", "o_entry_d", "i_ids", "i_w_ids", "i_qtys", "i_dist_info")
     ## DEF
 
     ## ----------------------------------------------
@@ -194,6 +193,7 @@ class Executor:
         c_last = None
         h_amount = rand.fixedPoint(2, constants.MIN_PAYMENT, constants.MAX_PAYMENT)
         h_date = datetime.now()
+        h_data = rand.astring(constants.DIST, constants.DIST)
 
         ## 85%: paying through own warehouse (or there is only 1 warehouse)
         if self.scaleParameters.warehouses == 1 or x <= 85:
@@ -214,7 +214,7 @@ class Executor:
             assert y > 60
             c_id = self.makeCustomerId()
 
-        return makeParameterDict(locals(), "w_id", "d_id", "h_amount", "c_w_id", "c_d_id", "c_id", "c_last", "h_date")
+        return makeParameterDict(locals(), "w_id", "d_id", "h_amount", "c_w_id", "c_d_id", "c_id", "c_last", "h_date", "h_data")
     ## DEF
 
     ## ----------------------------------------------

@@ -66,6 +66,8 @@ class Loader:
         for w_id in self.w_ids:
             self.loadDistricts(w_id)
         for w_id in self.w_ids:
+            self.loadDelivery(w_id)
+        for w_id in self.w_ids:
             self.handle.loadFinishWarehouse(w_id)
         ## FOR
         
@@ -105,6 +107,14 @@ class Loader:
         w_tuples = [ self.generateWarehouse(w_id) ]
         self.handle.loadTuples(constants.TABLENAME_WAREHOUSE, w_tuples)
 
+    def loadDelivery(self, w_id):
+        logging.debug("LOAD - %s: %d / %d" % (constants.TABLENAME_WAREHOUSE, w_id, len(self.w_ids)))
+        ## DELIVERY
+        dl_tuples = [ ]
+        for _ in range(self.scaleParameters.customersPerDistrict - self.scaleParameters.newOrdersPerDistrict):
+            dl_tuples.append(self.generateDelivery(w_id))
+        self.handle.loadTuples(constants.TABLENAME_DELIVERY, dl_tuples)
+
     ## ==============================================
     ## loadDistricts
     ## ==============================================
@@ -118,6 +128,9 @@ class Loader:
             
             c_tuples = [ ]
             h_tuples = [ ]
+
+            ## Select 10% of the customers to have bad credit
+            selectedRows = rand.selectUniqueIds(self.scaleParameters.customersPerDistrict / 10, 1, self.scaleParameters.customersPerDistrict)
             
             ## TPC-C 4.3.3.1. says that o_c_id should be a permutation of [1, 3000]. But since it
             ## is a c_id field, it seems to make sense to have it be a permutation of the
@@ -125,7 +138,8 @@ class Loader:
             cIdPermutation = [ ]
 
             for c_id in range(1, self.scaleParameters.customersPerDistrict+1):
-                c_tuples.append(self.generateCustomer(w_id, d_id, c_id, True))
+                badCredit = (c_id in selectedRows)
+                c_tuples.append(self.generateCustomer(w_id, d_id, c_id, badCredit, True))
                 h_tuples.append(self.generateHistory(w_id, d_id, c_id))
                 cIdPermutation.append(c_id)
             ## FOR
@@ -135,7 +149,6 @@ class Loader:
             
             o_tuples = [ ]
             ol_tuples = [ ]
-            no_tuples = [ ]
             
             for o_id in range(1, self.scaleParameters.customersPerDistrict+1):
                 o_ol_cnt = rand.number(constants.MIN_OL_CNT, constants.MAX_OL_CNT)
@@ -148,16 +161,12 @@ class Loader:
                 for ol_number in range(0, o_ol_cnt):
                     ol_tuples.append(self.generateOrderLine(o_entry_d, w_id, d_id, ol_number, self.scaleParameters.items))
                 ## FOR
-
-                ## This is not a new order: make a delivery
-                if not newOrder: no_tuples.append(self.generateDelivery(w_id))
             ## FOR
             
             self.handle.loadTuples(constants.TABLENAME_DISTRICT, d_tuples)
             self.handle.loadTuples(constants.TABLENAME_CUSTOMER, c_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDERS, o_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDER_LINE, ol_tuples)
-            self.handle.loadTuples(constants.TABLENAME_DELIVERY, no_tuples)
             self.handle.loadTuples(constants.TABLENAME_HISTORY, h_tuples)
             self.handle.loadFinishDistrict(w_id, d_id)
         ## FOR
@@ -199,7 +208,7 @@ class Loader:
     ## ==============================================
     ## generateCustomer
     ## ==============================================
-    def generateCustomer(self, c_w_id, c_d_id, c_id, doesReplicateName):
+    def generateCustomer(self, c_w_id, c_d_id, c_id, badCredit, doesReplicateName):
         c_first = rand.astring(constants.MIN_FIRST, constants.MAX_FIRST)
         c_middle = constants.MIDDLE
 
@@ -211,6 +220,8 @@ class Loader:
 
         c_phone = rand.nstring(constants.PHONE, constants.PHONE)
         c_since = datetime.now()
+        c_credit = constants.BAD_CREDIT if badCredit else constants.GOOD_CREDIT
+        c_credit_lim = constants.INITIAL_CREDIT_LIM
         c_discount = rand.fixedPoint(constants.DISCOUNT_DECIMALS, constants.MIN_DISCOUNT, constants.MAX_DISCOUNT)
         c_data = rand.astring(constants.MIN_C_DATA, constants.MAX_C_DATA)
 
@@ -222,7 +233,7 @@ class Loader:
 
         return [ c_id, c_d_id, c_w_id, c_first, c_middle, c_last, \
                 c_street1, c_street2, c_city, c_state, c_zip, \
-                c_phone, c_since, c_discount, c_data ]
+                c_phone, c_since, c_credit, c_credit_lim, c_discount, c_data ]
     ## DEF
 
     ## ==============================================

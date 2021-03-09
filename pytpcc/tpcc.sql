@@ -92,10 +92,21 @@ CREATE TABLE "order_line" (
 );
 
 CREATE TABLE "delivery" (
-  "dl_delivery_d" timestamp PRIMARY KEY,
+  "dl_delivery_d" timestamp,
   "dl_w_id" int,
   "dl_carrier_id" int,
+  PRIMARY KEY ("dl_delivery_d", "dl_w_id"),
   FOREIGN KEY ("dl_w_id") REFERENCES "warehouse" ("w_id")
+);
+
+CREATE TABLE "delivery_orders" (
+  "dlo_delivery_d" timestamp,
+  "dlo_w_id" int,
+  "dlo_entry_d" timestamp,
+  "dlo_d_id" int,
+  PRIMARY KEY ("dlo_delivery_d", "dlo_w_id", "dlo_entry_d", "dlo_d_id"),
+  FOREIGN KEY ("dlo_delivery_d", "dlo_w_id") REFERENCES "delivery" ("dl_delivery_d", "dl_w_id"),
+  FOREIGN KEY ("dlo_entry_d", "dlo_d_id", "dlo_w_id") REFERENCES "orders" ("o_entry_d", "o_d_id", "o_w_id")
 );
 
 CREATE TABLE "stock" (
@@ -124,54 +135,10 @@ CREATE INDEX IDX_ORDER_LINE_TREE ON "order_line" ("ol_d_id","ol_w_id","ol_entry_
 CREATE VIEW "orders_id" AS (
   SELECT
     o_entry_d,
-    o_d_id AS d_id,
-    o_w_id AS w_id,
+    o_d_id,
+    o_w_id,
     ROW_NUMBER() OVER (PARTITION BY o_d_id, o_w_id ORDER BY o_entry_d) AS o_id
   FROM orders
-);
-
-CREATE VIEW "delivery_id" AS (
-  SELECT
-    dl_delivery_d,
-    dl_w_id AS w_id,
-    ROW_NUMBER() OVER (PARTITION BY dl_w_id ORDER BY dl_delivery_d) AS dl_id
-  FROM delivery
-);
-
-CREATE VIEW "orders_delivery_match" AS (
-  WITH minimum_delivery AS (
-    SELECT
-      o_entry_d,
-      o_d_id AS d_id,
-      o_w_id AS w_id,
-      MIN(dl_delivery_d) AS dl_delivery_d
-    FROM orders
-    LEFT JOIN delivery
-    ON o_w_id = dl_w_id
-    WHERE o_entry_d < dl_delivery_d
-    GROUP BY o_entry_d, o_d_id, o_w_id
-  ),
-  orders_delivery_match AS (
-    SELECT
-      o_id,
-      d_id,
-      w_id,
-      o_id + MAX(dl_id - o_id) OVER (PARTITION BY d_id, w_id ORDER BY o_entry_d) AS dl_id
-    FROM minimum_delivery
-    LEFT JOIN orders_id USING(o_entry_d, d_id, w_id)
-    LEFT JOIN delivery_id USING(dl_delivery_d, w_id)
-  )
-  SELECT
-    o_id,
-    o_entry_d,
-    d_id AS o_d_id,
-    w_id AS o_w_id,
-    dl_id,
-    dl_delivery_d,
-    w_id AS dl_w_id
-  FROM orders_delivery_match
-  LEFT JOIN orders_id USING(o_id, d_id, w_id)
-  LEFT JOIN delivery_id USING(dl_id, w_id)
 );
 
 CREATE VIEW "orders_view" AS (
@@ -198,18 +165,24 @@ CREATE VIEW "orders_view" AS (
     o_all_local
   FROM orders
   LEFT JOIN order_line_stats USING(o_entry_d, o_d_id, o_w_id)
-  LEFT JOIN orders_delivery_match USING(o_entry_d, o_d_id, o_w_id)
-  LEFT JOIN delivery USING(dl_delivery_d, dl_w_id)
+  LEFT JOIN delivery_orders
+  ON dlo_entry_d = o_entry_d AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
+  LEFT JOIN delivery
+  ON dlo_delivery_d = dl_delivery_d AND dlo_w_id = dl_w_id
+  LEFT JOIN orders_id USING(o_entry_d, o_d_id, o_w_id)
 );
 
 CREATE VIEW "new_order_view" AS (
   SELECT
+    o_entry_d,
     o_id AS no_o_id,
     o_d_id AS no_d_id,
     o_w_id AS no_w_id
   FROM orders
-  LEFT JOIN orders_delivery_match USING(o_entry_d, o_d_id, o_w_id)
-  WHERE dl_delivery_d IS NULL
+  LEFT JOIN delivery_orders
+  ON dlo_entry_d = o_entry_d AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
+  LEFT JOIN orders_id USING(o_entry_d, o_d_id, o_w_id)
+  WHERE dlo_entry_d IS NULL
 );
 
 CREATE VIEW "order_line_view" AS (
@@ -220,7 +193,7 @@ CREATE VIEW "order_line_view" AS (
     ol_number,
     ol_i_id,
     ol_supply_w_id,
-    dl_delivery_d AS ol_delivery_d,
+    dlo_delivery_d AS ol_delivery_d,
     ol_quantity,
     ol_quantity * i_price AS ol_amount,
     ol_dist_info
@@ -229,8 +202,9 @@ CREATE VIEW "order_line_view" AS (
   ON ol_entry_d = o_entry_d AND ol_d_id = o_d_id AND ol_w_id = o_w_id
   LEFT JOIN item
   ON ol_i_id = i_id
-  LEFT JOIN orders_delivery_match USING(o_entry_d, o_d_id, o_w_id)
-  LEFT JOIN delivery USING(dl_delivery_d, dl_w_id)
+  LEFT JOIN delivery_orders
+  ON dlo_entry_d = o_entry_d AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
+  LEFT JOIN orders_id USING(o_entry_d, o_d_id, o_w_id)
 );
 
 CREATE VIEW "stock_view" AS (
@@ -263,7 +237,7 @@ CREATE VIEW "stock_view" AS (
     s_dist_10,
     s_ytd,
     s_order_cnt,
-    s_remote_cnt
+    s_remote_cnt,
     s_data
   FROM stock
   LEFT JOIN order_line_stats USING (s_i_id, s_w_id)
@@ -322,9 +296,10 @@ CREATE VIEW "customer_view" AS (
       o_c_id AS c_id,
       o_d_id AS c_d_id,
       o_w_id AS c_w_id,
-      COUNT(dl_delivery_d) AS c_delivery_cnt
-    FROM orders_delivery_match
-    LEFT JOIN orders USING(o_entry_d, o_d_id, o_w_id)
+      COUNT(dlo_delivery_d) AS c_delivery_cnt
+    FROM orders
+    LEFT JOIN delivery_orders
+    ON dlo_entry_d = o_entry_d AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
     GROUP BY o_c_id, o_d_id, o_w_id
   )
   SELECT
@@ -344,7 +319,7 @@ CREATE VIEW "customer_view" AS (
     c_credit,
     c_credit_lim,
     c_discount,
-    ol_total - c_ytd_payment AS c_balanace,
+    ol_total - c_ytd_payment AS c_balance,
     c_ytd_payment,
     c_payment_cnt,
     c_delivery_cnt,
@@ -398,6 +373,7 @@ CREATE VIEW "district_view" AS (
   SELECT
     d_id,
     d_w_id,
+    d_name,
     d_street_1,
     d_street_2,
     d_city,

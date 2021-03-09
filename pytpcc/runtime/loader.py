@@ -66,8 +66,6 @@ class Loader:
         for w_id in self.w_ids:
             self.loadDistricts(w_id)
         for w_id in self.w_ids:
-            self.loadDelivery(w_id)
-        for w_id in self.w_ids:
             self.handle.loadFinishWarehouse(w_id)
         ## FOR
         
@@ -107,13 +105,23 @@ class Loader:
         w_tuples = [ self.generateWarehouse(w_id) ]
         self.handle.loadTuples(constants.TABLENAME_WAREHOUSE, w_tuples)
 
-    def loadDelivery(self, w_id):
-        logging.debug("LOAD - %s: %d / %d" % (constants.TABLENAME_WAREHOUSE, w_id, len(self.w_ids)))
-        ## DELIVERY
-        dl_tuples = [ ]
-        for _ in range(self.scaleParameters.customersPerDistrict - self.scaleParameters.newOrdersPerDistrict):
-            dl_tuples.append(self.generateDelivery(w_id))
-        self.handle.loadTuples(constants.TABLENAME_DELIVERY, dl_tuples)
+        ## Select 10% of the stock to be marked "original"
+        s_tuples = [ ]
+        selectedRows = rand.selectUniqueIds(self.scaleParameters.items / 10, 1, self.scaleParameters.items)
+        total_tuples = 0
+        for i_id in range(1, self.scaleParameters.items+1):
+            original = (i_id in selectedRows)
+            s_tuples.append(self.generateStock(w_id, i_id, original))
+            if len(s_tuples) >= self.batch_size:
+                logging.debug("LOAD - %s [W_ID=%d]: %5d / %d" % (constants.TABLENAME_STOCK, w_id, total_tuples, self.scaleParameters.items))
+                self.handle.loadTuples(constants.TABLENAME_STOCK, s_tuples)
+                s_tuples = [ ]
+            total_tuples += 1
+        ## FOR
+        if len(s_tuples) > 0:
+            logging.debug("LOAD - %s [W_ID=%d]: %5d / %d" % (constants.TABLENAME_STOCK, w_id, total_tuples, self.scaleParameters.items))
+            self.handle.loadTuples(constants.TABLENAME_STOCK, s_tuples)
+    ## DEF
 
     ## ==============================================
     ## loadDistricts
@@ -128,6 +136,8 @@ class Loader:
             
             c_tuples = [ ]
             h_tuples = [ ]
+            dl_tuples = [ ]
+            dlo_tuples = [ ]
 
             ## Select 10% of the customers to have bad credit
             selectedRows = rand.selectUniqueIds(self.scaleParameters.customersPerDistrict / 10, 1, self.scaleParameters.customersPerDistrict)
@@ -157,6 +167,10 @@ class Loader:
                 newOrder = ((self.scaleParameters.customersPerDistrict - self.scaleParameters.newOrdersPerDistrict) < o_id)
                 o_tuples.append(self.generateOrder(o_entry_d, w_id, d_id, cIdPermutation[o_id - 1]))
 
+                if not newOrder:
+                    dl_delivery_d = datetime.now()
+                    dl_tuples.append(self.generateDelivery(dl_delivery_d, w_id))
+                    dlo_tuples.append(self.generateDeliveryOrder(dl_delivery_d, w_id, o_entry_d, d_id))
                 ## Generate each OrderLine for the order
                 for ol_number in range(0, o_ol_cnt):
                     ol_tuples.append(self.generateOrderLine(o_entry_d, w_id, d_id, ol_number, self.scaleParameters.items))
@@ -168,6 +182,8 @@ class Loader:
             self.handle.loadTuples(constants.TABLENAME_ORDERS, o_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDER_LINE, ol_tuples)
             self.handle.loadTuples(constants.TABLENAME_HISTORY, h_tuples)
+            self.handle.loadTuples(constants.TABLENAME_DELIVERY, dl_tuples)
+            self.handle.loadTuples(constants.TABLENAME_DELIVERY_ORDERS, dlo_tuples)
             self.handle.loadFinishDistrict(w_id, d_id)
         ## FOR
         
@@ -265,10 +281,33 @@ class Loader:
     ## ==============================================
     ## generateDelivery
     ## ==============================================
-    def generateDelivery(self, dl_w_id):
-        dl_delivery_d = datetime.now()
+    def generateDelivery(self, dl_delivery_d, dl_w_id):
         o_carrier_id = rand.number(constants.MIN_CARRIER_ID, constants.MAX_CARRIER_ID)
         return [ dl_delivery_d, dl_w_id, o_carrier_id ]
+    ## DEF
+
+    ## ==============================================
+    ## generateDeliveryOrder
+    ## ==============================================
+    def generateDeliveryOrder(self, dlo_delivery_d, dlo_w_id, dlo_entry_d, dlo_d_id):
+        return [ dlo_delivery_d, dlo_w_id, dlo_entry_d, dlo_d_id ]
+    ## DEF
+
+    ## ==============================================
+    ## generateStock
+    ## ==============================================
+    def generateStock(self, s_w_id, s_i_id, original):
+
+        s_data = rand.astring(constants.MIN_I_DATA, constants.MAX_I_DATA)
+        if original: self.fillOriginal(s_data)
+
+        s_dists = [ ]
+        for i in range(0, constants.DISTRICTS_PER_WAREHOUSE):
+            s_dists.append(rand.astring(constants.DIST, constants.DIST))
+        
+        return [ s_i_id, s_w_id ] + \
+               s_dists + \
+               [ s_data ]
     ## DEF
 
     ## ==============================================

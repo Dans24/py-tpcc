@@ -47,24 +47,43 @@ from abstractdriver import *
 TXN_QUERIES = {
     "DELIVERY": {
         "insertDeliveryEvent": "INSERT INTO delivery VALUES (%s, %s, %s)", # dl_delivery_d, dl_w_id, dl_carrier_id
-        "getNewOrderDelivery": "SELECT o_d_id AS d_id, o_id AS no_o_id FROM orders_delivery_match WHERE dl_delivery_d = %s AND dl_w_id = %s", # ol_delivery_d, w_id
+        "getNewOrder": "SELECT no_o_id, o_entry_d FROM new_order_view WHERE no_d_id = %s AND no_w_id = %s", # d_id, w_id
+        "insertDeliveryOrders": "INSERT INTO delivery_orders VALUES (%s, %s, %s, %s)", # dl_delivery_d, w_id, o_entry_d, d_id
     },
     "NEW_ORDER": {
         "getWarehouseTaxRate": "SELECT w_tax FROM warehouse_view WHERE w_id = %s", # w_id
         "getDistrict": "SELECT d_tax, d_next_o_id FROM district_view WHERE D_ID = %s AND d_w_id = %s", # d_id, w_id
         "getCustomer": "SELECT c_discount, c_last, c_credit FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_id = %s", # w_id, d_id, c_id
         "insertNewOrderEvent": "INSERT INTO orders VALUES (%s, %s, %s, %s)", # o_entry_d, o_d_id, o_w_id, o_c_id
-        "getDistInfo": "SELECT {} FROM stock_view WHERE s_i_id = %s AND s_w_id = %s", # d_id, ol_i_id, ol_supply_w_id
         "insertOrderLine": "INSERT INTO order_line VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", # ol_entry_d, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info
         "getItemInfo": "SELECT i_price, i_name, i_data FROM item WHERE i_id = %s", # ol_i_id
-        "getStockInfo": "SELECT s_quantity, s_data FROM stock_view WHERE s_i_id = %s AND s_w_id = %s" # d_id, ol_i_id, ol_supply_w_id
+        "getStockInfo": "SELECT s_quantity, s_data, {} FROM stock_view WHERE s_i_id = %s AND s_w_id = %s" # d_id, ol_i_id, ol_supply_w_id
     },
-
+    "ORDER_STATUS": {
+        "getCustomerByCustomerId": "SELECT c_id, c_first, c_middle, c_last, c_balance FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_id = %s", # w_id, d_id, c_id
+        "getCustomersByLastName": "SELECT c_id, c_first, c_middle, c_last, c_balance FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_last = %s ORDER BY c_first", # w_id, d_id, c_last
+        "getLastOrder": "SELECT o_id, o_carrier_id, o_entry_d FROM orders_view WHERE o_w_id = %s AND o_d_id = %s AND o_c_id = %s ORDER BY o_id DESC LIMIT 1", # w_id, d_id, c_id
+        "getOrderLines": "SELECT ol_supply_w_id, ol_i_id, ol_quantity, ol_amount, ol_delivery_d FROM order_line_view WHERE ol_w_id = %s AND ol_d_id = %s AND ol_o_id = %s", # w_id, d_id, o_id        
+    },
     "PAYMENT": {
         "getCustomerByCustomerId": "SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_since, c_discount, c_data FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_id = %s", # w_id, d_id, c_id
         "getCustomersByLastName": "SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_since, c_discount, c_data FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_last = %s ORDER BY c_first", # w_id, d_id, c_last
-        "insertPaymentEvent": "INSERT INTO history VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
-    }
+        "insertPaymentEvent": "INSERT INTO history VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", # c_id, c_d_id, c_w_id, d_id, w_id, h_date, h_amount, h_data
+        "getWarehouse": "SELECT w_name, w_street_1, w_street_2, w_city, w_state, w_zip FROM warehouse_view WHERE w_id = %s", # w_id
+        "getDistrict": "SELECT d_name, d_street_1, d_street_2, d_city, d_state, d_zip FROM district_view WHERE d_w_id = %s AND d_id = %s", # w_id, d_id
+    },
+    "STOCK_LEVEL": {
+        "getOId": "SELECT d_next_o_id FROM district_view WHERE d_w_id = %s AND d_id = %s", 
+        "getStockCount": """
+            SELECT COUNT(DISTINCT(ol_i_id)) FROM order_line_view, stock_view
+            WHERE ol_w_id = %s
+              AND ol_d_id = %s
+              AND ol_o_id >= %s
+              AND s_w_id = %s
+              AND s_i_id = ol_i_id
+              AND s_quantity < %s
+        """,
+    },
 }
 
 REPORT_MODE = True
@@ -153,16 +172,26 @@ class PostgresDriver(AbstractDriver):
     ## ----------------------------------------------
     def doDelivery(self, params):
         q = TXN_QUERIES["DELIVERY"]
-        result = None
+        result = []
         
         ol_delivery_d = params["ol_delivery_d"]
         w_id = params["w_id"]
         o_carrier_id = params["o_carrier_id"]
+
         self.cursor.execute(q["insertDeliveryEvent"], [ol_delivery_d, w_id, o_carrier_id])
-        
-        if self.output:
-            self.cursor.execute(q["getNewOrderDelivery"], [ol_delivery_d, w_id])
-            result = self.cursor.fetchall()
+        for d_id in range(1, constants.DISTRICTS_PER_WAREHOUSE+1):
+            self.cursor.execute(q["getNewOrder"], [d_id, w_id])
+            newOrder = self.cursor.fetchone()
+            if newOrder == None:
+                ## No orders for this district: skip it. Note: This must be reported if > 1%
+                continue
+            assert len(newOrder) > 0
+            no_o_id = newOrder[0]
+            o_entry_d = newOrder[1]
+            
+            self.cursor.execute(q["insertDeliveryOrders"], [ol_delivery_d, w_id, o_entry_d, d_id])
+
+            result.append((d_id, no_o_id))
 
         self.conn.commit()
         return result
@@ -172,7 +201,6 @@ class PostgresDriver(AbstractDriver):
     ## ----------------------------------------------
     def doNewOrder(self, params):
         q = TXN_QUERIES["NEW_ORDER"]
-        result = None
         
         w_id = params["w_id"]
         d_id = params["d_id"]
@@ -187,18 +215,17 @@ class PostgresDriver(AbstractDriver):
         assert len(i_ids) == len(i_w_ids)
         assert len(i_ids) == len(i_qtys)
 
-        if self.output:
-            self.cursor.execute(q["getWarehouseTaxRate"], [w_id])
-            w_tax = self.cursor.fetchone()[0]
-            
-            self.cursor.execute(q["getDistrict"], [d_id, w_id])
-            district_info = self.cursor.fetchone()
-            d_tax = district_info[0]
-            d_next_o_id = 1 + district_info[1]
+        self.cursor.execute(q["getWarehouseTaxRate"], [w_id])
+        w_tax = self.cursor.fetchone()[0]
+        
+        self.cursor.execute(q["getDistrict"], [d_id, w_id])
+        district_info = self.cursor.fetchone()
+        d_tax = district_info[0]
+        d_next_o_id = 1 + district_info[1]
 
-            self.cursor.execute(q["getCustomer"], [w_id, d_id, c_id])
-            customer_info = self.cursor.fetchone()
-            c_discount = customer_info[0]
+        self.cursor.execute(q["getCustomer"], [w_id, d_id, c_id])
+        customer_info = self.cursor.fetchone()
+        c_discount = customer_info[0]
         
         ## ----------------
         ## Insert Order Information
@@ -209,55 +236,90 @@ class PostgresDriver(AbstractDriver):
         ## Insert Order Item Information
         ## ----------------
         item_data = []
+        total = 0
         for i in range(len(i_ids)):
             ol_number = i + 1
             ol_supply_w_id = i_w_ids[i]
             ol_i_id = i_ids[i]
             ol_quantity = i_qtys[i]
 
-            self.cursor.execute(SQL(q["getDistInfo"]).format(Identifier('s_dist_%02d'%d_id)), [ol_i_id, ol_supply_w_id])
-            distInfo = self.cursor.fetchone()
-            ol_dist_info = distInfo[0]
+            self.cursor.execute(SQL(q["getStockInfo"]).format(Identifier('s_dist_%02d'%d_id)), [ol_i_id, ol_supply_w_id])
+            stockInfo = self.cursor.fetchone()
+            s_quantity = stockInfo[0]
+            s_data = stockInfo[1]
+            ol_dist_info = stockInfo[2]
 
             self.cursor.execute(q["insertOrderLine"], [o_entry_d, d_id, w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info])
-            if self.output:
-                self.cursor.execute(q["getItemInfo"], [ol_i_id])
-                itemInfo = self.cursor.fetchone()
-                i_name = itemInfo[1]
-                i_data = itemInfo[2]
-                i_price = itemInfo[0]
+            
+            self.cursor.execute(q["getItemInfo"], [ol_i_id])
+            itemInfo = self.cursor.fetchone()
+            i_price = itemInfo[0]
+            i_name = itemInfo[1]
+            i_data = itemInfo[2]
 
-                self.cursor.execute(q["getStockInfo"], [ol_i_id, ol_supply_w_id])
-                stockInfo = self.cursor.fetchone()
-                s_quantity = stockInfo[0]
-                s_data = stockInfo[1]
+            if i_data.find(constants.ORIGINAL_STRING) != -1 and s_data.find(constants.ORIGINAL_STRING) != -1:
+                brand_generic = 'B'
+            else:
+                brand_generic = 'G'
 
-                if i_data.find(constants.ORIGINAL_STRING) != -1 and s_data.find(constants.ORIGINAL_STRING) != -1:
-                    brand_generic = 'B'
-                else:
-                    brand_generic = 'G'
+            ol_amount = ol_quantity * i_price
+            total += ol_amount
 
-                ol_amount = ol_quantity * i_price
-
-                item_data.append( (i_name, s_quantity, brand_generic, i_price, ol_amount) )
+            item_data.append( (i_name, s_quantity, brand_generic, i_price, ol_amount) )
         ## FOR
         
         ## Commit!
         self.conn.commit()
 
-        if self.output:
-            total *= (1 - c_discount) * (1 + w_tax + d_tax)
+        total *= (1 - c_discount) * (1 + w_tax + d_tax)
 
-            misc = [ (w_tax, d_tax, d_next_o_id, total) ]
-            result = [ customer_info, misc, item_data ]
+        misc = [ (w_tax, d_tax, d_next_o_id, total) ]
+        result = [ customer_info, misc, item_data ]
         
         return result
 
     ## ----------------------------------------------
     ## doOrderStatus
     ## ----------------------------------------------
+        ## ----------------------------------------------
+    ## doOrderStatus
+    ## ----------------------------------------------
     def doOrderStatus(self, params):
-        return False
+        q = TXN_QUERIES["ORDER_STATUS"]
+        
+        w_id = params["w_id"]
+        d_id = params["d_id"]
+        c_id = params["c_id"]
+        c_last = params["c_last"]
+        
+        assert w_id, pformat(params)
+        assert d_id, pformat(params)
+
+        if c_id != None:
+            self.cursor.execute(q["getCustomerByCustomerId"], [w_id, d_id, c_id])
+            customer = self.cursor.fetchone()
+        else:
+            # Get the midpoint customer's id
+            self.cursor.execute(q["getCustomersByLastName"], [w_id, d_id, c_last])
+            all_customers = self.cursor.fetchall()
+            assert len(all_customers) > 0
+            namecnt = len(all_customers)
+            index = (namecnt-1)/2
+            customer = all_customers[index]
+            c_id = customer[0]
+        assert len(customer) > 0
+        assert c_id != None
+
+        self.cursor.execute(q["getLastOrder"], [w_id, d_id, c_id])
+        order = self.cursor.fetchone()
+        if order:
+            self.cursor.execute(q["getOrderLines"], [w_id, d_id, order[0]])
+            orderLines = self.cursor.fetchall()
+        else:
+            orderLines = [ ]
+
+        self.conn.commit()
+        return [ customer, order, orderLines ]
         
     ## ----------------------------------------------
     ## doPayment
@@ -293,17 +355,42 @@ class PostgresDriver(AbstractDriver):
         # c_ytd_payment = SUM(h_amount)
         # c_payment_cnt = COUNT(*)
 
+        self.cursor.execute(q["getWarehouse"], [w_id])
+        warehouse = self.cursor.fetchone()
+        
+        self.cursor.execute(q["getDistrict"], [w_id, d_id])
+        district = self.cursor.fetchone()
+
+        # Concatenate w_name, four spaces, d_name
+        h_data = "%s    %s" % (warehouse[0], district[0])
+
         # Create the history record
         self.cursor.execute(q["insertPaymentEvent"], [c_id, c_d_id, c_w_id, d_id, w_id, h_date, h_amount, h_data])
 
         self.conn.commit()
 
-        return True
+        return [ warehouse, district, customer]
         
     ## ----------------------------------------------
     ## doStockLevel
     ## ----------------------------------------------    
     def doStockLevel(self, params):
-        return False
+        q = TXN_QUERIES["STOCK_LEVEL"]
+
+        w_id = params["w_id"]
+        d_id = params["d_id"]
+        threshold = params["threshold"]
+        
+        self.cursor.execute(q["getOId"], [w_id, d_id])
+        result = self.cursor.fetchone()
+        assert result
+        o_id = result[0]
+        
+        self.cursor.execute(q["getStockCount"], [w_id, d_id, (o_id - 20), w_id, threshold])
+        result = self.cursor.fetchone()
+        
+        self.conn.commit()
+        
+        return int(result[0])
         
 ## CLASS

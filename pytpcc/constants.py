@@ -116,6 +116,10 @@ INITIAL_NEW_ORDERS_PER_DISTRICT = 900
 #  TPC-C 2.4.3.4 (page 31) says this must be displayed when new order rolls back.
 INVALID_ITEM_MESSAGE = "Item number is not valid"
 
+#  Used to generate stock level transactions
+MIN_STOCK_LEVEL_THRESHOLD = 10
+MAX_STOCK_LEVEL_THRESHOLD = 20
+
 #  Used to generate payment transactions
 MIN_PAYMENT = 1.0
 MAX_PAYMENT = 5000.0
@@ -128,10 +132,12 @@ TABLENAME_ITEM       = "item"
 TABLENAME_WAREHOUSE  = "warehouse"
 TABLENAME_DISTRICT   = "district"
 TABLENAME_CUSTOMER   = "customer"
+TABLENAME_STOCK      = "stock"
 TABLENAME_ORDERS     = "orders"
 TABLENAME_ORDER_LINE = "order_line"
 TABLENAME_HISTORY    = "history"
 TABLENAME_DELIVERY   = "delivery"
+TABLENAME_DELIVERY_ORDERS   = "delivery_orders"
 
 ALL_TABLES = [
     TABLENAME_ITEM,
@@ -152,5 +158,7 @@ def enum(*sequential, **named):
 TransactionTypes = enum(
     "DELIVERY",
     "NEW_ORDER",
+    "ORDER_STATUS",
     "PAYMENT",
+    "STOCK_LEVEL",
 )

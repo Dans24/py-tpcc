@@ -183,7 +183,7 @@ if __name__ == '__main__':
                          help='Instruct the driver to reset the contents of the database')
     aparser.add_argument('--scalefactor', default=1, type=float, metavar='SF',
                          help='Benchmark scale factor')
-    aparser.add_argument('--mix', default='4,47,49', metavar='D,P,NO',
+    aparser.add_argument('--mix', default='4,4,4,43,45', metavar='SL,D,OS,P,NO',
                          help='Transaction mix')
     aparser.add_argument('--skip-warehouses', default=0, type=int, metavar='SW',
                          help='Number of Warehouses previously loaded')

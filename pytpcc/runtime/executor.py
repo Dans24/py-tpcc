@@ -89,15 +89,19 @@ class Executor:
         ## This is not strictly accurate: The requirement is for certain
         ## *minimum* percentages to be maintained. This is close to the right
         ## thing, but not precisely correct. See TPC-C 5.2.4 (page 68).
-        x = rand.number(1, self.txnprob[2])
+        x = rand.number(1, self.txnprob[4])
         params = None
         txn = None
         if x <= self.txnprob[0]: ## 4%
+            txn, params = (constants.TransactionTypes.STOCK_LEVEL, self.generateStockLevelParams())
+        elif x <= self.txnprob[1]: ## 4%
             txn, params = (constants.TransactionTypes.DELIVERY, self.generateDeliveryParams())
-        elif x <= self.txnprob[1]: ## 47%
+        elif x <= self.txnprob[2]: ## 4%
+            txn, params = (constants.TransactionTypes.ORDER_STATUS, self.generateOrderStatusParams())
+        elif x <= self.txnprob[3]: ## 43%
             txn, params = (constants.TransactionTypes.PAYMENT, self.generatePaymentParams())
-        else: ## 49%
-            assert x > self.txnprob[1]
+        else: ## 45%
+            assert x > self.txnprob[3]
             txn, params = (constants.TransactionTypes.NEW_ORDER, self.generateNewOrderParams())
         
         return (txn, params)

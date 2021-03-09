@@ -102,8 +102,12 @@ class AbstractDriver(object):
             result = self.doDelivery(params)
         elif constants.TransactionTypes.NEW_ORDER == txn:
             result = self.doNewOrder(params)
+        elif constants.TransactionTypes.ORDER_STATUS == txn:
+            result = self.doOrderStatus(params)
         elif constants.TransactionTypes.PAYMENT == txn:
             result = self.doPayment(params)
+        elif constants.TransactionTypes.STOCK_LEVEL == txn:
+            result = self.doStockLevel(params)
         else:
             assert False, "Unexpected TransactionType: " + txn
         return result

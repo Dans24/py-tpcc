@@ -66,6 +66,8 @@ class Loader:
         for w_id in self.w_ids:
             self.loadDistricts(w_id)
         for w_id in self.w_ids:
+            self.loadWarehouseDeliveries(w_id)
+        for w_id in self.w_ids:
             self.handle.loadFinishWarehouse(w_id)
         ## FOR
         
@@ -163,17 +165,11 @@ class Loader:
             for o_id in range(1, self.scaleParameters.customersPerDistrict+1):
                 o_ol_cnt = rand.number(constants.MIN_OL_CNT, constants.MAX_OL_CNT)
                 o_entry_d = datetime.now()
-                ## The last newOrdersPerDistrict are new orders
-                newOrder = ((self.scaleParameters.customersPerDistrict - self.scaleParameters.newOrdersPerDistrict) < o_id)
-                o_tuples.append(self.generateOrder(o_entry_d, w_id, d_id, cIdPermutation[o_id - 1]))
+                o_tuples.append(self.generateOrder(o_id, w_id, d_id, cIdPermutation[o_id - 1], o_entry_d))
 
-                if not newOrder:
-                    dl_delivery_d = datetime.now()
-                    dl_tuples.append(self.generateDelivery(dl_delivery_d, w_id))
-                    dlo_tuples.append(self.generateDeliveryOrder(dl_delivery_d, w_id, o_entry_d, d_id))
                 ## Generate each OrderLine for the order
                 for ol_number in range(0, o_ol_cnt):
-                    ol_tuples.append(self.generateOrderLine(o_entry_d, w_id, d_id, ol_number, self.scaleParameters.items))
+                    ol_tuples.append(self.generateOrderLine(o_id, w_id, d_id, ol_number, self.scaleParameters.items))
                 ## FOR
             ## FOR
             
@@ -182,11 +178,29 @@ class Loader:
             self.handle.loadTuples(constants.TABLENAME_ORDERS, o_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDER_LINE, ol_tuples)
             self.handle.loadTuples(constants.TABLENAME_HISTORY, h_tuples)
-            self.handle.loadTuples(constants.TABLENAME_DELIVERY, dl_tuples)
-            self.handle.loadTuples(constants.TABLENAME_DELIVERY_ORDERS, dlo_tuples)
             self.handle.loadFinishDistrict(w_id, d_id)
         ## FOR
         
+    ## DEF
+
+    def loadWarehouseDeliveries(self, w_id):
+        logging.debug("LOAD - %s: %d / %d" % (constants.TABLENAME_WAREHOUSE, w_id, len(self.w_ids)))
+    
+        # The last newOrdersPerDistrict are new orders
+        numDeliveries = (self.scaleParameters.customersPerDistrict - self.scaleParameters.newOrdersPerDistrict)
+
+        dl_tuples = []
+        dlo_tuples = []
+        for o_id in range(1, numDeliveries + 1):
+            dl_delivery_d = datetime.now()                
+            dl_tuples.append(self.generateDelivery(dl_delivery_d, w_id))
+            for d_id in range(1, self.scaleParameters.districtsPerWarehouse+1):
+                dlo_tuples.append(self.generateDeliveryOrder(dl_delivery_d, w_id, o_id, d_id))
+            ## FOR
+        ## FOR
+
+        self.handle.loadTuples(constants.TABLENAME_DELIVERY, dl_tuples)
+        self.handle.loadTuples(constants.TABLENAME_DELIVERY_ORDERS, dlo_tuples)
     ## DEF
 
     ## ==============================================
@@ -255,14 +269,14 @@ class Loader:
     ## ==============================================
     ## generateOrder
     ## ==============================================
-    def generateOrder(self, o_entry_d, o_w_id, o_d_id, o_c_id):
-        return [ o_entry_d, o_d_id, o_w_id, o_c_id ]
+    def generateOrder(self, o_id, o_w_id, o_d_id, o_c_id, o_entry_d):
+        return [ o_id, o_d_id, o_w_id, o_c_id, o_entry_d ]
     ## DEF
 
     ## ==============================================
     ## generateOrderLine
     ## ==============================================
-    def generateOrderLine(self, ol_entry_d, ol_w_id, ol_d_id, ol_number, max_items):
+    def generateOrderLine(self, ol_o_id, ol_w_id, ol_d_id, ol_number, max_items):
         ol_i_id = rand.number(1, max_items)
         ol_supply_w_id = ol_w_id
         ol_quantity = constants.INITIAL_QUANTITY
@@ -275,7 +289,7 @@ class Loader:
                                                   ol_w_id)
         ol_dist_info = rand.astring(constants.DIST, constants.DIST)
 
-        return [ ol_entry_d, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info ]
+        return [ ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info ]
     ## DEF
 
     ## ==============================================
@@ -289,8 +303,8 @@ class Loader:
     ## ==============================================
     ## generateDeliveryOrder
     ## ==============================================
-    def generateDeliveryOrder(self, dlo_delivery_d, dlo_w_id, dlo_entry_d, dlo_d_id):
-        return [ dlo_delivery_d, dlo_w_id, dlo_entry_d, dlo_d_id ]
+    def generateDeliveryOrder(self, dlo_delivery_d, dlo_w_id, dlo_o_id, dlo_d_id):
+        return [ dlo_delivery_d, dlo_w_id, dlo_o_id, dlo_d_id ]
     ## DEF
 
     ## ==============================================

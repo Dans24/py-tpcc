@@ -68,16 +68,20 @@ CREATE TABLE "item" (
 );
 
 CREATE TABLE "orders" (
-  "o_entry_d" timestamp,
+  "o_id" int,
   "o_d_id" int,
   "o_w_id" int,
   "o_c_id" int,
-  PRIMARY KEY ("o_entry_d", "o_d_id", "o_w_id"),
+  "o_entry_d" timestamp,
+  PRIMARY KEY ("o_id", "o_d_id", "o_w_id"),
   FOREIGN KEY ("o_d_id", "o_w_id", "o_c_id") REFERENCES "customer" ("c_d_id", "c_w_id", "c_id")
 );
 
+-- Optimize order_status.getCustomerByCustomerId/LastName
+CREATE INDEX "orders_customer_fk" ON "orders" ("o_d_id", "o_w_id", "o_c_id");
+
 CREATE TABLE "order_line" (
-  "ol_entry_d" timestamp,
+  "ol_o_id" int,
   "ol_d_id" int,
   "ol_w_id" int,
   "ol_number" int,
@@ -85,11 +89,14 @@ CREATE TABLE "order_line" (
   "ol_supply_w_id" int,
   "ol_quantity" int,
   "ol_dist_info" char(24),
-  PRIMARY KEY ("ol_entry_d", "ol_d_id", "ol_w_id", "ol_number"),
-  FOREIGN KEY ("ol_entry_d", "ol_d_id", "ol_w_id") REFERENCES "orders" ("o_entry_d", "o_d_id", "o_w_id"),
+  PRIMARY KEY ("ol_o_id", "ol_d_id", "ol_w_id", "ol_number"),
+  FOREIGN KEY ("ol_o_id", "ol_d_id", "ol_w_id") REFERENCES "orders" ("o_id", "o_d_id", "o_w_id"),
   FOREIGN KEY ("ol_i_id") REFERENCES "item" ("i_id"),
   FOREIGN KEY ("ol_supply_w_id") REFERENCES "warehouse" ("w_id")
 );
+
+-- Optimize new_order.getStockInfo
+CREATE INDEX "order_line_stock_fk" ON "order_line" ("ol_supply_w_id", "ol_i_id");
 
 CREATE TABLE "delivery" (
   "dl_delivery_d" timestamp,
@@ -102,12 +109,14 @@ CREATE TABLE "delivery" (
 CREATE TABLE "delivery_orders" (
   "dlo_delivery_d" timestamp,
   "dlo_w_id" int,
-  "dlo_entry_d" timestamp,
+  "dlo_o_id" int,
   "dlo_d_id" int,
-  PRIMARY KEY ("dlo_delivery_d", "dlo_w_id", "dlo_entry_d", "dlo_d_id"),
+  PRIMARY KEY ("dlo_delivery_d", "dlo_w_id", "dlo_o_id", "dlo_d_id"),
   FOREIGN KEY ("dlo_delivery_d", "dlo_w_id") REFERENCES "delivery" ("dl_delivery_d", "dl_w_id"),
-  FOREIGN KEY ("dlo_entry_d", "dlo_d_id", "dlo_w_id") REFERENCES "orders" ("o_entry_d", "o_d_id", "o_w_id")
+  FOREIGN KEY ("dlo_o_id", "dlo_d_id", "dlo_w_id") REFERENCES "orders" ("o_id", "o_d_id", "o_w_id")
 );
+
+CREATE INDEX "delivery_orders_orders_fk" ON "delivery_orders" ("dlo_o_id", "dlo_d_id", "dlo_w_id");
 
 CREATE TABLE "stock" (
   "s_i_id" int,
@@ -123,36 +132,27 @@ CREATE TABLE "stock" (
   "s_dist_09" char(24),
   "s_dist_10" char(24),
   "s_data" varchar(50),
-  PRIMARY KEY ("s_i_id", "s_w_id"),
+  PRIMARY KEY ("s_w_id", "s_i_id"),
   FOREIGN KEY ("s_i_id") REFERENCES "item" ("i_id"),
   FOREIGN KEY ("s_w_id") REFERENCES "warehouse" ("w_id")
 );
 
 --CREATE INDEX IDX_ORDER_LINE_3COL ON ORDER_LINE (OL_W_ID,OL_D_ID,OL_O_ID);
 --CREATE INDEX IDX_ORDER_LINE_2COL ON ORDER_LINE (OL_W_ID,OL_D_ID);
-CREATE INDEX IDX_ORDER_LINE_TREE ON "order_line" ("ol_d_id","ol_w_id","ol_entry_d");
-
-CREATE VIEW "orders_id" AS (
-  SELECT
-    o_entry_d,
-    o_d_id,
-    o_w_id,
-    ROW_NUMBER() OVER (PARTITION BY o_d_id, o_w_id ORDER BY o_entry_d) AS o_id
-  FROM orders
-);
+--CREATE INDEX IDX_ORDER_LINE_TREE ON "order_line" ("ol_d_id","ol_w_id","ol_o_id");
 
 CREATE VIEW "orders_view" AS (
   WITH order_line_stats AS (
     SELECT
-      o_entry_d,
+      o_id,
       o_d_id,
       o_w_id,
       COUNT(*) AS o_ol_cnt,
       COUNT(NULLIF(ol_supply_w_id, o_w_id)) = 0 AS o_all_local
     FROM order_line
     LEFT JOIN orders
-    ON o_entry_d = ol_entry_d AND o_d_id = ol_d_id AND o_w_id = ol_w_id
-    GROUP BY o_entry_d, o_d_id, o_w_id
+    ON o_id = ol_o_id AND o_d_id = ol_d_id AND o_w_id = ol_w_id
+    GROUP BY o_id, o_d_id, o_w_id
   )
   SELECT
     o_id,
@@ -164,30 +164,27 @@ CREATE VIEW "orders_view" AS (
     o_ol_cnt,
     o_all_local
   FROM orders
-  LEFT JOIN order_line_stats USING(o_entry_d, o_d_id, o_w_id)
+  LEFT JOIN order_line_stats USING(o_id, o_d_id, o_w_id)
   LEFT JOIN delivery_orders
-  ON dlo_entry_d = o_entry_d AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
+  ON dlo_o_id = o_id AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
   LEFT JOIN delivery
   ON dlo_delivery_d = dl_delivery_d AND dlo_w_id = dl_w_id
-  LEFT JOIN orders_id USING(o_entry_d, o_d_id, o_w_id)
 );
 
 CREATE VIEW "new_order_view" AS (
   SELECT
-    o_entry_d,
     o_id AS no_o_id,
     o_d_id AS no_d_id,
     o_w_id AS no_w_id
   FROM orders
   LEFT JOIN delivery_orders
-  ON dlo_entry_d = o_entry_d AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
-  LEFT JOIN orders_id USING(o_entry_d, o_d_id, o_w_id)
-  WHERE dlo_entry_d IS NULL
+  ON dlo_o_id = o_id AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
+  WHERE dlo_o_id IS NULL
 );
 
 CREATE VIEW "order_line_view" AS (
   SELECT
-    o_id AS ol_o_id,
+    ol_o_id,
     ol_d_id,
     ol_w_id,
     ol_number,
@@ -199,12 +196,11 @@ CREATE VIEW "order_line_view" AS (
     ol_dist_info
   FROM order_line
   LEFT JOIN orders
-  ON ol_entry_d = o_entry_d AND ol_d_id = o_d_id AND ol_w_id = o_w_id
+  ON ol_i_id = o_id AND ol_d_id = o_d_id AND ol_w_id = o_w_id
   LEFT JOIN item
   ON ol_i_id = i_id
   LEFT JOIN delivery_orders
-  ON dlo_entry_d = o_entry_d AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
-  LEFT JOIN orders_id USING(o_entry_d, o_d_id, o_w_id)
+  ON dlo_o_id = o_id AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
 );
 
 CREATE VIEW "stock_view" AS (
@@ -252,7 +248,7 @@ CREATE VIEW "customer_view" AS (
       SUM(ol_quantity * i_price) AS ol_total
     FROM order_line
     LEFT JOIN orders
-    ON o_entry_d = ol_entry_d AND o_d_id = ol_d_id AND o_w_id = ol_w_id
+    ON o_id = ol_o_id AND o_d_id = ol_d_id AND o_w_id = ol_w_id
     LEFT JOIN item
     ON i_id = ol_i_id
     GROUP BY ol_d_id, ol_w_id, o_c_id
@@ -299,7 +295,7 @@ CREATE VIEW "customer_view" AS (
       COUNT(dlo_delivery_d) AS c_delivery_cnt
     FROM orders
     LEFT JOIN delivery_orders
-    ON dlo_entry_d = o_entry_d AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
+    ON dlo_o_id = o_id AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
     GROUP BY o_c_id, o_d_id, o_w_id
   )
   SELECT
@@ -327,8 +323,8 @@ CREATE VIEW "customer_view" AS (
   FROM customer
   LEFT JOIN order_line_stats USING(c_id, c_d_id, c_w_id)
   LEFT JOIN history_stats USING(c_id, c_d_id, c_w_id)
-  LEFT JOIN bc_data USING(c_id, c_d_id, c_w_id)
   LEFT JOIN delivery_stats USING(c_id, c_d_id, c_w_id)
+  LEFT JOIN bc_data USING(c_id, c_d_id, c_w_id)
 );
 
 CREATE VIEW "warehouse_view" AS (
@@ -366,7 +362,7 @@ CREATE VIEW "district_view" AS (
     SELECT
       o_d_id AS d_id,
       o_w_id AS d_w_id,
-      COUNT(*) as orders_cnt
+      MAX(o_id) as d_last_o_id
     FROM orders
     GROUP BY o_d_id, o_w_id
   )
@@ -381,8 +377,17 @@ CREATE VIEW "district_view" AS (
     d_zip,
     d_tax,
     d_ytd,
-    orders_cnt + 1 AS d_next_o_id
+    d_last_o_id + 1 AS d_next_o_id
   FROM district
   LEFT JOIN history_stats USING(d_id, d_w_id)
   LEFT JOIN orders_stats USING(d_id, d_w_id)
-)
+);
+
+CREATE VIEW "item_stock" AS (
+  SELECT
+    ol_i_id AS s_i_id,
+    ol_supply_w_id AS s_w_id,
+    ((-SUM(ol_quantity) % 91) + 91) % 91 + 10 AS s_quantity
+  FROM order_line
+  GROUP BY ol_i_id, s_w_id
+);

@@ -47,15 +47,16 @@ from abstractdriver import *
 TXN_QUERIES = {
     "DELIVERY": {
         "insertDeliveryEvent": "INSERT INTO delivery VALUES (%s, %s, %s)", # dl_delivery_d, dl_w_id, dl_carrier_id
-        "getNewOrder": "SELECT no_o_id, o_entry_d FROM new_order_view WHERE no_d_id = %s AND no_w_id = %s", # d_id, w_id
-        "insertDeliveryOrders": "INSERT INTO delivery_orders VALUES (%s, %s, %s, %s)", # dl_delivery_d, w_id, o_entry_d, d_id
+        "getNewOrder": "SELECT no_o_id FROM new_order_view WHERE no_d_id = %s AND no_w_id = %s LIMIT 1", # d_id, w_id
+        "insertDeliveryOrders": "INSERT INTO delivery_orders VALUES (%s, %s, %s, %s)", # dl_delivery_d, w_id, no_o_id, d_id
     },
     "NEW_ORDER": {
-        "getWarehouseTaxRate": "SELECT w_tax FROM warehouse_view WHERE w_id = %s", # w_id
-        "getDistrict": "SELECT d_tax, d_next_o_id FROM district_view WHERE D_ID = %s AND d_w_id = %s", # d_id, w_id
-        "getCustomer": "SELECT c_discount, c_last, c_credit FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_id = %s", # w_id, d_id, c_id
-        "insertNewOrderEvent": "INSERT INTO orders VALUES (%s, %s, %s, %s)", # o_entry_d, o_d_id, o_w_id, o_c_id
-        "insertOrderLine": "INSERT INTO order_line VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", # ol_entry_d, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info
+        "getWarehouseTaxRate": "SELECT w_tax FROM warehouse WHERE w_id = %s", # w_id
+        "getDistrict": "SELECT d_tax FROM district WHERE d_id = %s AND d_w_id = %s", # d_id, w_id
+        "getOId": "SELECT MAX(o_id) + 1 as d_next_o_id FROM orders WHERE o_d_id = %s AND o_w_id = %s", # d_id, w_id
+        "getCustomer": "SELECT c_discount, c_last, c_credit FROM customer WHERE c_w_id = %s AND c_d_id = %s AND c_id = %s", # w_id, d_id, c_id
+        "insertNewOrderEvent": "INSERT INTO orders VALUES (%s, %s, %s, %s, %s)", # o_id, o_d_id, o_w_id, o_c_id, o_entry_d
+        "insertOrderLine": "INSERT INTO order_line VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", # ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info
         "getItemInfo": "SELECT i_price, i_name, i_data FROM item WHERE i_id = %s", # ol_i_id
         "getStockInfo": "SELECT s_quantity, s_data, {} FROM stock_view WHERE s_i_id = %s AND s_w_id = %s" # d_id, ol_i_id, ol_supply_w_id
     },
@@ -69,19 +70,20 @@ TXN_QUERIES = {
         "getCustomerByCustomerId": "SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_since, c_discount, c_data FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_id = %s", # w_id, d_id, c_id
         "getCustomersByLastName": "SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_since, c_discount, c_data FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_last = %s ORDER BY c_first", # w_id, d_id, c_last
         "insertPaymentEvent": "INSERT INTO history VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", # c_id, c_d_id, c_w_id, d_id, w_id, h_date, h_amount, h_data
-        "getWarehouse": "SELECT w_name, w_street_1, w_street_2, w_city, w_state, w_zip FROM warehouse_view WHERE w_id = %s", # w_id
-        "getDistrict": "SELECT d_name, d_street_1, d_street_2, d_city, d_state, d_zip FROM district_view WHERE d_w_id = %s AND d_id = %s", # w_id, d_id
+        "getWarehouse": "SELECT w_name, w_street_1, w_street_2, w_city, w_state, w_zip FROM warehouse WHERE w_id = %s", # w_id
+        "getDistrict": "SELECT d_name, d_street_1, d_street_2, d_city, d_state, d_zip FROM district WHERE d_w_id = %s AND d_id = %s", # w_id, d_id
     },
     "STOCK_LEVEL": {
-        "getOId": "SELECT d_next_o_id FROM district_view WHERE d_w_id = %s AND d_id = %s", 
+        "getOId": "SELECT MAX(o_id) + 1 as d_next_o_id FROM orders WHERE o_w_id = %s AND o_d_id = %s",
         "getStockCount": """
-            SELECT COUNT(DISTINCT(ol_i_id)) FROM order_line_view, stock_view
-            WHERE ol_w_id = %s
-              AND ol_d_id = %s
-              AND ol_o_id >= %s
-              AND s_w_id = %s
-              AND s_i_id = ol_i_id
-              AND s_quantity < %s
+            SELECT COUNT(DISTINCT(s_i_id)) FROM order_line, item_stock
+            WHERE
+                ol_w_id = %s AND
+                ol_d_id = %s AND
+                ol_o_id >= %s AND
+                s_w_id = %s AND
+                s_i_id = ol_i_id AND
+                s_quantity < %s;
         """,
     },
 }
@@ -187,9 +189,8 @@ class PostgresDriver(AbstractDriver):
                 continue
             assert len(newOrder) > 0
             no_o_id = newOrder[0]
-            o_entry_d = newOrder[1]
             
-            self.cursor.execute(q["insertDeliveryOrders"], [ol_delivery_d, w_id, o_entry_d, d_id])
+            self.cursor.execute(q["insertDeliveryOrders"], [ol_delivery_d, w_id, no_o_id, d_id])
 
             result.append((d_id, no_o_id))
 
@@ -221,7 +222,9 @@ class PostgresDriver(AbstractDriver):
         self.cursor.execute(q["getDistrict"], [d_id, w_id])
         district_info = self.cursor.fetchone()
         d_tax = district_info[0]
-        d_next_o_id = 1 + district_info[1]
+
+        self.cursor.execute(q["getOId"], [d_id, w_id])
+        d_next_o_id = self.cursor.fetchone()[0]
 
         self.cursor.execute(q["getCustomer"], [w_id, d_id, c_id])
         customer_info = self.cursor.fetchone()
@@ -230,7 +233,7 @@ class PostgresDriver(AbstractDriver):
         ## ----------------
         ## Insert Order Information
         ## ----------------
-        self.cursor.execute(q["insertNewOrderEvent"], [o_entry_d, d_id, w_id, c_id])
+        self.cursor.execute(q["insertNewOrderEvent"], [d_next_o_id, d_id, w_id, c_id,o_entry_d])
 
         ## ----------------
         ## Insert Order Item Information
@@ -249,7 +252,7 @@ class PostgresDriver(AbstractDriver):
             s_data = stockInfo[1]
             ol_dist_info = stockInfo[2]
 
-            self.cursor.execute(q["insertOrderLine"], [o_entry_d, d_id, w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info])
+            self.cursor.execute(q["insertOrderLine"], [d_next_o_id, d_id, w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info])
             
             self.cursor.execute(q["getItemInfo"], [ol_i_id])
             itemInfo = self.cursor.fetchone()

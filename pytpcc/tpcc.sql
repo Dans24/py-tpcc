@@ -19,7 +19,7 @@ CREATE TABLE "district" (
   "d_state" char(2),
   "d_zip" char(9),
   "d_tax" numeric(4,4),
-  PRIMARY KEY ("d_id", "d_w_id"),
+  PRIMARY KEY ("d_w_id", "d_id"),
   FOREIGN KEY ("d_w_id") REFERENCES "warehouse" ("w_id")
 );
 
@@ -41,9 +41,11 @@ CREATE TABLE "customer" (
   "c_credit_lim" numeric(12, 2),
   "c_discount" numeric(4,4),
   "c_data" varchar(500),
-  PRIMARY KEY ("c_id", "c_d_id", "c_w_id"),
+  PRIMARY KEY ("c_w_id", "c_d_id", "c_id"),
   FOREIGN KEY ("c_d_id", "c_w_id") REFERENCES "district" ("d_id", "d_w_id")
 );
+
+CREATE INDEX "customer_last" ON "customer" ("c_w_id", "c_d_id", "c_last");
 
 CREATE TABLE "history" (
   "h_c_id" int,
@@ -54,7 +56,7 @@ CREATE TABLE "history" (
   "h_date" timestamp,
   "h_amount" numeric(6, 2),
   "h_data" varchar(24),
-  PRIMARY KEY ("h_c_id", "h_c_d_id", "h_c_w_id", "h_d_id", "h_w_id", "h_date"),
+  PRIMARY KEY ("h_c_w_id", "h_c_d_id", "h_c_id", "h_w_id", "h_d_id", "h_date"),
   FOREIGN KEY ("h_c_id", "h_c_d_id", "h_c_w_id") REFERENCES "customer" ("c_id", "c_d_id", "c_w_id"),
   FOREIGN KEY ("h_d_id", "h_w_id") REFERENCES "district" ("d_id", "d_w_id")
 );
@@ -73,7 +75,7 @@ CREATE TABLE "orders" (
   "o_w_id" int,
   "o_c_id" int,
   "o_entry_d" timestamp,
-  PRIMARY KEY ("o_id", "o_d_id", "o_w_id"),
+  PRIMARY KEY ("o_w_id", "o_d_id", "o_id"),
   FOREIGN KEY ("o_d_id", "o_w_id", "o_c_id") REFERENCES "customer" ("c_d_id", "c_w_id", "c_id")
 );
 
@@ -88,8 +90,9 @@ CREATE TABLE "order_line" (
   "ol_i_id" int,
   "ol_supply_w_id" int,
   "ol_quantity" int,
+  "ol_amount" numeric(6,2),
   "ol_dist_info" char(24),
-  PRIMARY KEY ("ol_o_id", "ol_d_id", "ol_w_id", "ol_number"),
+  PRIMARY KEY ("ol_w_id", "ol_d_id", "ol_o_id", "ol_number"),
   FOREIGN KEY ("ol_o_id", "ol_d_id", "ol_w_id") REFERENCES "orders" ("o_id", "o_d_id", "o_w_id"),
   FOREIGN KEY ("ol_i_id") REFERENCES "item" ("i_id"),
   FOREIGN KEY ("ol_supply_w_id") REFERENCES "warehouse" ("w_id")
@@ -102,7 +105,7 @@ CREATE TABLE "delivery" (
   "dl_delivery_d" timestamp,
   "dl_w_id" int,
   "dl_carrier_id" int,
-  PRIMARY KEY ("dl_delivery_d", "dl_w_id"),
+  PRIMARY KEY ("dl_w_id", "dl_delivery_d"),
   FOREIGN KEY ("dl_w_id") REFERENCES "warehouse" ("w_id")
 );
 
@@ -111,12 +114,12 @@ CREATE TABLE "delivery_orders" (
   "dlo_w_id" int,
   "dlo_o_id" int,
   "dlo_d_id" int,
-  PRIMARY KEY ("dlo_delivery_d", "dlo_w_id", "dlo_o_id", "dlo_d_id"),
+  PRIMARY KEY ("dlo_w_id", "dlo_delivery_d", "dlo_o_id", "dlo_d_id"),
   FOREIGN KEY ("dlo_delivery_d", "dlo_w_id") REFERENCES "delivery" ("dl_delivery_d", "dl_w_id"),
   FOREIGN KEY ("dlo_o_id", "dlo_d_id", "dlo_w_id") REFERENCES "orders" ("o_id", "o_d_id", "o_w_id")
 );
 
-CREATE INDEX "delivery_orders_orders_fk" ON "delivery_orders" ("dlo_o_id", "dlo_d_id", "dlo_w_id");
+CREATE INDEX "delivery_orders_orders_fk" ON "delivery_orders" ("dlo_w_id", "dlo_d_id", "dlo_o_id");
 
 CREATE TABLE "stock" (
   "s_i_id" int,

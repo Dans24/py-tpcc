@@ -216,6 +216,18 @@ class PostgresDriver(AbstractDriver):
         assert len(i_ids) == len(i_w_ids)
         assert len(i_ids) == len(i_qtys)
 
+        items = [ ]
+        for i in range(len(i_ids)):
+            self.cursor.execute(q["getItemInfo"], [i_ids[i]])
+            item = self.cursor.fetchone()
+            ## TPCC defines 1% of neworder gives a wrong itemid, causing rollback.
+            ## Note that this will happen with 1% of transactions on purpose.
+            if len(item) == 0:
+                self.conn.rollback()
+                return
+            items.append(self.cursor.fetchone())
+        assert len(items) == len(i_ids)
+
         self.cursor.execute(q["getWarehouseTaxRate"], [w_id])
         w_tax = self.cursor.fetchone()[0]
         
@@ -252,20 +264,21 @@ class PostgresDriver(AbstractDriver):
             s_data = stockInfo[1]
             ol_dist_info = stockInfo[2]
 
-            self.cursor.execute(q["insertOrderLine"], [d_next_o_id, d_id, w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info])
-            
-            self.cursor.execute(q["getItemInfo"], [ol_i_id])
-            itemInfo = self.cursor.fetchone()
+            itemInfo = items[i]
             i_price = itemInfo[0]
             i_name = itemInfo[1]
             i_data = itemInfo[2]
+
+            ol_amount = ol_quantity * i_price
+
+            self.cursor.execute(q["insertOrderLine"], [d_next_o_id, d_id, w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_amount, ol_dist_info])
+        
 
             if i_data.find(constants.ORIGINAL_STRING) != -1 and s_data.find(constants.ORIGINAL_STRING) != -1:
                 brand_generic = 'B'
             else:
                 brand_generic = 'G'
 
-            ol_amount = ol_quantity * i_price
             total += ol_amount
 
             item_data.append( (i_name, s_quantity, brand_generic, i_price, ol_amount) )

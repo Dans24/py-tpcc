@@ -178,7 +178,6 @@ class Loader:
             self.handle.loadTuples(constants.TABLENAME_ORDERS, o_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDER_LINE, ol_tuples)
             self.handle.loadTuples(constants.TABLENAME_HISTORY, h_tuples)
-            self.handle.loadFinishDistrict(w_id, d_id)
         ## FOR
         
     ## DEF
@@ -201,6 +200,8 @@ class Loader:
 
         self.handle.loadTuples(constants.TABLENAME_DELIVERY, dl_tuples)
         self.handle.loadTuples(constants.TABLENAME_DELIVERY_ORDERS, dlo_tuples)
+        for d_id in range(1, self.scaleParameters.districtsPerWarehouse+1):
+            self.handle.loadFinishDistrict(w_id, d_id)
     ## DEF
 
     ## ==============================================
@@ -287,9 +288,15 @@ class Loader:
             ol_supply_w_id = rand.numberExcluding(self.scaleParameters.starting_warehouse,
                                                   self.scaleParameters.ending_warehouse,
                                                   ol_w_id)
+        
+        if ol_o_id < (constants.INITIAL_ORDERS_PER_DISTRICT - constants.INITIAL_NEW_ORDERS_PER_DISTRICT):
+            ol_amount = 0.00
+        else:
+            ol_amount = rand.fixedPoint(constants.MONEY_DECIMALS, constants.MIN_AMOUNT, constants.MAX_PRICE * constants.MAX_OL_QUANTITY)
+
         ol_dist_info = rand.astring(constants.DIST, constants.DIST)
 
-        return [ ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info ]
+        return [ ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_amount, ol_dist_info ]
     ## DEF
 
     ## ==============================================

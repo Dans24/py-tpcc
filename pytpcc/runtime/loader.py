@@ -165,7 +165,7 @@ class Loader:
             for o_id in range(1, self.scaleParameters.customersPerDistrict+1):
                 o_ol_cnt = rand.number(constants.MIN_OL_CNT, constants.MAX_OL_CNT)
                 o_entry_d = datetime.now()
-                o_tuples.append(self.generateOrder(o_id, w_id, d_id, cIdPermutation[o_id - 1], o_entry_d))
+                o_tuples.append(self.generateOrder(o_id, w_id, d_id, cIdPermutation[o_id - 1], o_ol_cnt, o_entry_d))
 
                 ## Generate each OrderLine for the order
                 for ol_number in range(0, o_ol_cnt):
@@ -270,8 +270,8 @@ class Loader:
     ## ==============================================
     ## generateOrder
     ## ==============================================
-    def generateOrder(self, o_id, o_w_id, o_d_id, o_c_id, o_entry_d):
-        return [ o_id, o_d_id, o_w_id, o_c_id, o_entry_d ]
+    def generateOrder(self, o_id, o_w_id, o_d_id, o_c_id, o_ol_cnt, o_entry_d):
+        return [ o_id, o_d_id, o_w_id, o_c_id, o_ol_cnt, o_entry_d ]
     ## DEF
 
     ## ==============================================

@@ -74,6 +74,7 @@ CREATE TABLE "orders" (
   "o_d_id" int,
   "o_w_id" int,
   "o_c_id" int,
+  "o_ol_cnt" int,
   "o_entry_d" timestamp,
   PRIMARY KEY ("o_w_id", "o_d_id", "o_id"),
   FOREIGN KEY ("o_d_id", "o_w_id", "o_c_id") REFERENCES "customer" ("c_d_id", "c_w_id", "c_id")
@@ -150,7 +151,6 @@ CREATE VIEW "orders_view" AS (
       o_id,
       o_d_id,
       o_w_id,
-      COUNT(*) AS o_ol_cnt,
       COUNT(NULLIF(ol_supply_w_id, o_w_id)) = 0 AS o_all_local
     FROM order_line
     LEFT JOIN orders
@@ -195,13 +195,11 @@ CREATE VIEW "order_line_view" AS (
     ol_supply_w_id,
     dlo_delivery_d AS ol_delivery_d,
     ol_quantity,
-    ol_quantity * i_price AS ol_amount,
+    ol_amount,
     ol_dist_info
   FROM order_line
   LEFT JOIN orders
   ON ol_i_id = o_id AND ol_d_id = o_d_id AND ol_w_id = o_w_id
-  LEFT JOIN item
-  ON ol_i_id = i_id
   LEFT JOIN delivery_orders
   ON dlo_o_id = o_id AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
 );
@@ -211,13 +209,11 @@ CREATE VIEW "stock_view" AS (
     SELECT
       ol_i_id AS s_i_id,
       ol_supply_w_id AS s_w_id,
-      SUM(ol_quantity * i_price) AS s_ytd,
+      SUM(ol_amount) AS s_ytd,
       COUNT(*) AS s_order_cnt,
       COUNT(NULLIF(ol_supply_w_id, ol_w_id)) AS s_remote_cnt,
       SUM(ol_quantity) AS total_quantity
     FROM order_line
-    LEFT JOIN item
-    ON ol_i_id = i_id
     GROUP BY ol_i_id, ol_supply_w_id
   )
   SELECT
@@ -248,12 +244,12 @@ CREATE VIEW "customer_view" AS (
       o_c_id AS c_id,
       ol_d_id AS c_d_id,
       ol_w_id AS c_w_id,
-      SUM(ol_quantity * i_price) AS ol_total
+      SUM(ol_amount) AS ol_total
     FROM order_line
+    INNER JOIN delivery_orders
+    ON dlo_o_id = ol_o_id AND dlo_d_id = ol_d_id AND dlo_w_id = ol_w_id
     LEFT JOIN orders
     ON o_id = ol_o_id AND o_d_id = ol_d_id AND o_w_id = ol_w_id
-    LEFT JOIN item
-    ON i_id = ol_i_id
     GROUP BY ol_d_id, ol_w_id, o_c_id
   ),
   history_stats AS (
@@ -384,13 +380,4 @@ CREATE VIEW "district_view" AS (
   FROM district
   LEFT JOIN history_stats USING(d_id, d_w_id)
   LEFT JOIN orders_stats USING(d_id, d_w_id)
-);
-
-CREATE VIEW "item_stock" AS (
-  SELECT
-    ol_i_id AS s_i_id,
-    ol_supply_w_id AS s_w_id,
-    ((-SUM(ol_quantity) % 91) + 91) % 91 + 10 AS s_quantity
-  FROM order_line
-  GROUP BY ol_i_id, s_w_id
 );

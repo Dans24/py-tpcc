@@ -75,6 +75,7 @@ CREATE TABLE "orders" (
   "o_w_id" int,
   "o_c_id" int,
   "o_ol_cnt" int,
+  "o_all_local" boolean,
   "o_entry_d" timestamp,
   PRIMARY KEY ("o_w_id", "o_d_id", "o_id"),
   FOREIGN KEY ("o_d_id", "o_w_id", "o_c_id") REFERENCES "customer" ("c_d_id", "c_w_id", "c_id")
@@ -145,18 +146,30 @@ CREATE TABLE "stock" (
 --CREATE INDEX IDX_ORDER_LINE_2COL ON ORDER_LINE (OL_W_ID,OL_D_ID);
 --CREATE INDEX IDX_ORDER_LINE_TREE ON "order_line" ("ol_d_id","ol_w_id","ol_o_id");
 
+CREATE TABLE "stock_history" (
+  "sh_s_i_id" int,
+  "sh_s_w_id" int,
+  "sh_date" timestamp,
+  "sh_quantity" int,
+  PRIMARY KEY ("sh_s_w_id", "sh_s_i_id", "sh_date"),
+  FOREIGN KEY ("sh_s_w_id", "sh_s_i_id") REFERENCES "stock" ("s_w_id", "s_i_id")
+);
+
+CREATE INDEX "stock_history_date_desc_idx" ON "stock_history" ("sh_s_w_id", "sh_s_i_id", "sh_date" DESC);
+
+CREATE TABLE "customer_history" (
+  "ch_c_id" int,
+  "ch_c_d_id" int,
+  "ch_c_w_id" int,
+  "ch_date" timestamp,
+  "ch_data" varchar(500),
+  PRIMARY KEY ("ch_c_w_id", "ch_c_d_id", "ch_c_id", "ch_date"),
+  FOREIGN KEY ("ch_c_w_id", "ch_c_d_id", "ch_c_id") REFERENCES "customer" ("c_w_id", "c_d_id", "c_id")
+);
+
+CREATE INDEX "customer_history_date_desc_idx" ON "customer_history" ("ch_c_w_id", "ch_c_d_id", "ch_c_id", "ch_date" DESC);
+
 CREATE VIEW "orders_view" AS (
-  WITH order_line_stats AS (
-    SELECT
-      o_id,
-      o_d_id,
-      o_w_id,
-      COUNT(NULLIF(ol_supply_w_id, o_w_id)) = 0 AS o_all_local
-    FROM order_line
-    LEFT JOIN orders
-    ON o_id = ol_o_id AND o_d_id = ol_d_id AND o_w_id = ol_w_id
-    GROUP BY o_id, o_d_id, o_w_id
-  )
   SELECT
     o_id,
     o_d_id,
@@ -167,7 +180,6 @@ CREATE VIEW "orders_view" AS (
     o_ol_cnt,
     o_all_local
   FROM orders
-  LEFT JOIN order_line_stats USING(o_id, o_d_id, o_w_id)
   LEFT JOIN delivery_orders
   ON dlo_o_id = o_id AND dlo_d_id = o_d_id AND dlo_w_id = o_w_id
   LEFT JOIN delivery
@@ -212,14 +224,14 @@ CREATE VIEW "stock_view" AS (
       SUM(ol_amount) AS s_ytd,
       COUNT(*) AS s_order_cnt,
       COUNT(NULLIF(ol_supply_w_id, ol_w_id)) AS s_remote_cnt,
-      SUM(ol_quantity) AS total_quantity
     FROM order_line
     GROUP BY ol_i_id, ol_supply_w_id
   )
   SELECT
-    s_i_id,
+    DISTINCT ON (s_w_id, s_i_id)
     s_w_id,
-    ((-total_quantity % 91) + 91) % 91 + 10 AS s_quantity,
+    s_i_id,
+    sh_quantity as s_quantity,
     s_dist_01,
     s_dist_02,
     s_dist_03,
@@ -235,7 +247,10 @@ CREATE VIEW "stock_view" AS (
     s_remote_cnt,
     s_data
   FROM stock
+  INNER JOIN stock_history
+  ON s_w_id = sh_s_w_id AND s_i_id = sh_s_i_id
   LEFT JOIN order_line_stats USING (s_i_id, s_w_id)
+  ORDER BY s_w_id, s_i_id, sh_date DESC
 );
 
 CREATE VIEW "customer_view" AS (
@@ -246,11 +261,9 @@ CREATE VIEW "customer_view" AS (
       ol_w_id AS c_w_id,
       SUM(ol_amount) AS ol_total
     FROM order_line
-    INNER JOIN delivery_orders
-    ON dlo_o_id = ol_o_id AND dlo_d_id = ol_d_id AND dlo_w_id = ol_w_id
-    LEFT JOIN orders
+    INNER JOIN orders_view
     ON o_id = ol_o_id AND o_d_id = ol_d_id AND o_w_id = ol_w_id
-    GROUP BY ol_d_id, ol_w_id, o_c_id
+    GROUP BY o_c_id, ol_d_id, ol_w_id
   ),
   history_stats AS (
     SELECT
@@ -261,30 +274,6 @@ CREATE VIEW "customer_view" AS (
       COUNT(*) AS c_payment_cnt
     FROM history
     GROUP BY h_c_d_id, h_c_w_id, h_c_id
-  ),
-  bc_data AS (
-    WITH bc_history AS (
-      SELECT
-        h_c_d_id,
-        h_c_w_id,
-        h_c_id,
-        h_d_id,
-        h_w_id,
-        h_amount,
-        c_data
-      FROM history
-      LEFT JOIN customer
-      ON h_c_d_id = c_d_id AND h_c_w_id = c_w_id AND h_c_id = c_id
-      WHERE c_credit = 'BC'
-      ORDER BY h_date DESC
-    )
-    SELECT
-      h_c_id AS c_id,
-      h_c_d_id AS c_d_id,
-      h_c_w_id AS c_w_id,
-      left(string_agg(concat_ws(' ', h_c_d_id, h_c_d_id, h_c_w_id, h_d_id, h_w_id, h_amount), '|') || '|' || c_data, 500) AS bc_c_data-- MAX_C_DATA = 500
-    FROM bc_history
-    GROUP BY h_c_d_id, h_c_w_id, h_c_id, c_data
   ),
   delivery_stats AS (
     SELECT
@@ -298,6 +287,7 @@ CREATE VIEW "customer_view" AS (
     GROUP BY o_c_id, o_d_id, o_w_id
   )
   SELECT
+    DISTINCT ON (c_id, c_d_id, c_w_id)
     c_id,
     c_d_id,
     c_w_id,
@@ -318,12 +308,14 @@ CREATE VIEW "customer_view" AS (
     c_ytd_payment,
     c_payment_cnt,
     c_delivery_cnt,
-    COALESCE(bc_c_data, '') AS c_data
+    ch_data AS c_data
   FROM customer
+  INNER JOIN customer_history
+  ON c_id = ch_c_id AND c_d_id = ch_c_d_id AND c_w_id = ch_c_w_id
   LEFT JOIN order_line_stats USING(c_id, c_d_id, c_w_id)
   LEFT JOIN history_stats USING(c_id, c_d_id, c_w_id)
   LEFT JOIN delivery_stats USING(c_id, c_d_id, c_w_id)
-  LEFT JOIN bc_data USING(c_id, c_d_id, c_w_id)
+  ORDER BY c_w_id, c_d_id, c_id, ch_date DESC
 );
 
 CREATE VIEW "warehouse_view" AS (

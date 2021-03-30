@@ -56,10 +56,11 @@ TXN_QUERIES = {
         "getDistrict": "SELECT d_tax FROM district WHERE d_id = %s AND d_w_id = %s", # d_id, w_id
         "getOId": "SELECT MAX(o_id) + 1 as d_next_o_id FROM orders WHERE o_d_id = %s AND o_w_id = %s", # d_id, w_id
         "getCustomer": "SELECT c_discount, c_last, c_credit FROM customer WHERE c_w_id = %s AND c_d_id = %s AND c_id = %s", # w_id, d_id, c_id
-        "insertNewOrderEvent": "INSERT INTO orders VALUES (%s, %s, %s, %s, %s, %s)", # o_id, o_d_id, o_w_id, o_c_id, o_ol_cnt, o_entry_d
+        "insertNewOrderEvent": "INSERT INTO orders VALUES (%s, %s, %s, %s, %s, %s, %s)", # o_id, o_d_id, o_w_id, o_c_id, o_ol_cnt, o_all_local, o_entry_d
         "insertOrderLine": "INSERT INTO order_line VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", # ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_dist_info
         "getItemInfo": "SELECT i_price, i_name, i_data FROM item WHERE i_id = %s", # ol_i_id
-        "getStockInfo": "SELECT s_quantity, s_data, {} FROM stock_view WHERE s_i_id = %s AND s_w_id = %s" # d_id, ol_i_id, ol_supply_w_id
+        "getStockInfo": "SELECT s_quantity, s_data, {} FROM stock_view WHERE s_i_id = %s AND s_w_id = %s", # d_id, ol_i_id, ol_supply_w_id
+        "updateStock": "INSERT INTO stock_history VALUES (%s, %s, %s, %s)" # sh_i_id, sh_w_id, sh_date, sh_quantity
     },
     "ORDER_STATUS": {
         "getCustomerByCustomerId": "SELECT c_id, c_first, c_middle, c_last, c_balance FROM customer_view WHERE c_w_id = %s AND c_d_id = %s AND c_id = %s", # w_id, d_id, c_id
@@ -73,6 +74,7 @@ TXN_QUERIES = {
         "insertPaymentEvent": "INSERT INTO history VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", # c_id, c_d_id, c_w_id, d_id, w_id, h_date, h_amount, h_data
         "getWarehouse": "SELECT w_name, w_street_1, w_street_2, w_city, w_state, w_zip FROM warehouse WHERE w_id = %s", # w_id
         "getDistrict": "SELECT d_name, d_street_1, d_street_2, d_city, d_state, d_zip FROM district WHERE d_w_id = %s AND d_id = %s", # w_id, d_id
+        "updateBCCustomer": "INSERT INTO customer_history VALUES (%s, %s, %s, %s, %s)" # ch_id, ch_d_id, ch_w_id, ch_date, ch_data
     },
     "STOCK_LEVEL": {
         "getOId": "SELECT MAX(o_id) + 1 as d_next_o_id FROM orders WHERE o_w_id = %s AND o_d_id = %s",
@@ -219,17 +221,24 @@ class PostgresDriver(AbstractDriver):
         assert len(i_ids) == len(i_w_ids)
         assert len(i_ids) == len(i_qtys)
 
+        all_local = True
         items = [ ]
         for i in range(len(i_ids)):
+            ## Determine if this is an all local order or not
+            all_local = all_local and i_w_ids[i] == w_id
             self.cursor.execute(q["getItemInfo"], [i_ids[i]])
             item = self.cursor.fetchone()
-            ## TPCC defines 1% of neworder gives a wrong itemid, causing rollback.
-            ## Note that this will happen with 1% of transactions on purpose.
+            items.append(item)
+        ## FOR
+        assert len(items) == len(i_ids)
+
+        ## TPCC defines 1% of neworder gives a wrong itemid, causing rollback.
+        ## Note that this will happen with 1% of transactions on purpose.
+        for item in items:
             if item == None:
                 self.conn.rollback()
                 return
-            items.append(item)
-        assert len(items) == len(i_ids)
+        ## FOR
 
         self.cursor.execute(q["getWarehouseTaxRate"], [w_id])
         w_tax = self.cursor.fetchone()[0]
@@ -248,12 +257,13 @@ class PostgresDriver(AbstractDriver):
         ## ----------------
         ## Insert Order Information
         ## ----------------
-        self.cursor.execute(q["insertNewOrderEvent"], [d_next_o_id, d_id, w_id, c_id, len(i_ids), o_entry_d])
+        o_ol_cnt = len(i_ids)
+        self.cursor.execute(q["insertNewOrderEvent"], [d_next_o_id, d_id, w_id, c_id, o_ol_cnt, all_local, o_entry_d])
 
         ## ----------------
         ## Insert Order Item Information
         ## ----------------
-        item_data = []
+        item_data = [ ]
         total = 0
         for i in range(len(i_ids)):
             ol_number = i + 1
@@ -266,6 +276,13 @@ class PostgresDriver(AbstractDriver):
             s_quantity = stockInfo[0]
             s_data = stockInfo[1]
             ol_dist_info = stockInfo[2]
+
+            ## Update stock
+            if s_quantity >= ol_quantity + 10:
+                s_quantity = s_quantity - ol_quantity
+            else:
+                s_quantity = s_quantity + 91 - ol_quantity
+            self.cursor.execute(q["updateStock"], [ol_i_id, ol_supply_w_id, o_entry_d, s_quantity])
 
             itemInfo = items[i]
             i_price = itemInfo[0]
@@ -373,6 +390,17 @@ class PostgresDriver(AbstractDriver):
         
         self.cursor.execute(q["getDistrict"], [w_id, d_id])
         district = self.cursor.fetchone()
+
+        # Customer Credit Information
+        c_data = customer[14]
+        c_credit = customer[12]
+        if c_credit == constants.BAD_CREDIT:
+            newData = " ".join(map(str, [c_id, c_d_id, c_w_id, d_id, w_id, h_amount]))
+            c_data = (newData + "|" + c_data)
+            if len(c_data) > constants.MAX_C_DATA: c_data = c_data[:constants.MAX_C_DATA]
+            self.cursor.execute(q["updateBCCustomer"], [c_id, c_d_id, c_w_id, h_date, c_data])
+        else:
+            c_data = ""
 
         # Concatenate w_name, four spaces, d_name
         h_data = "%s    %s" % (warehouse[0], district[0])

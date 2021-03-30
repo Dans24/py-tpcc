@@ -109,20 +109,25 @@ class Loader:
 
         ## Select 10% of the stock to be marked "original"
         s_tuples = [ ]
+        sh_tuples = [ ]
         selectedRows = rand.selectUniqueIds(self.scaleParameters.items / 10, 1, self.scaleParameters.items)
         total_tuples = 0
         for i_id in range(1, self.scaleParameters.items+1):
             original = (i_id in selectedRows)
             s_tuples.append(self.generateStock(w_id, i_id, original))
+            sh_tuples.append(self.generateStockHistory(w_id, i_id))
             if len(s_tuples) >= self.batch_size:
                 logging.debug("LOAD - %s [W_ID=%d]: %5d / %d" % (constants.TABLENAME_STOCK, w_id, total_tuples, self.scaleParameters.items))
                 self.handle.loadTuples(constants.TABLENAME_STOCK, s_tuples)
+                self.handle.loadTuples(constants.TABLENAME_STOCK_HISTORY, sh_tuples)
                 s_tuples = [ ]
+                sh_tuples = [ ]
             total_tuples += 1
         ## FOR
         if len(s_tuples) > 0:
             logging.debug("LOAD - %s [W_ID=%d]: %5d / %d" % (constants.TABLENAME_STOCK, w_id, total_tuples, self.scaleParameters.items))
             self.handle.loadTuples(constants.TABLENAME_STOCK, s_tuples)
+            self.handle.loadTuples(constants.TABLENAME_STOCK_HISTORY, sh_tuples)
     ## DEF
 
     ## ==============================================
@@ -137,6 +142,7 @@ class Loader:
             d_tuples = [ self.generateDistrict(w_id, d_id) ]
             
             c_tuples = [ ]
+            ch_tuples = [ ]
             h_tuples = [ ]
             dl_tuples = [ ]
             dlo_tuples = [ ]
@@ -152,6 +158,7 @@ class Loader:
             for c_id in range(1, self.scaleParameters.customersPerDistrict+1):
                 badCredit = (c_id in selectedRows)
                 c_tuples.append(self.generateCustomer(w_id, d_id, c_id, badCredit, True))
+                ch_tuples.append(self.generateCustomerHistory(w_id, d_id, c_id))
                 h_tuples.append(self.generateHistory(w_id, d_id, c_id))
                 cIdPermutation.append(c_id)
             ## FOR
@@ -175,6 +182,7 @@ class Loader:
             
             self.handle.loadTuples(constants.TABLENAME_DISTRICT, d_tuples)
             self.handle.loadTuples(constants.TABLENAME_CUSTOMER, c_tuples)
+            self.handle.loadTuples(constants.TABLENAME_CUSTOMER_HISTORY, ch_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDERS, o_tuples)
             self.handle.loadTuples(constants.TABLENAME_ORDER_LINE, ol_tuples)
             self.handle.loadTuples(constants.TABLENAME_HISTORY, h_tuples)
@@ -268,10 +276,21 @@ class Loader:
     ## DEF
 
     ## ==============================================
+    ## generateCustomerHistory
+    ## ==============================================
+    def generateCustomerHistory(self, c_w_id, c_d_id, c_id):
+        ch_date = datetime.now()
+        ch_data = rand.astring(constants.MIN_C_DATA, constants.MAX_C_DATA)
+
+        return [ c_id, c_d_id, c_w_id, ch_date, ch_data ]
+    ## DEF
+
+    ## ==============================================
     ## generateOrder
     ## ==============================================
     def generateOrder(self, o_id, o_w_id, o_d_id, o_c_id, o_ol_cnt, o_entry_d):
-        return [ o_id, o_d_id, o_w_id, o_c_id, o_ol_cnt, o_entry_d ]
+        o_all_local = constants.INITIAL_ALL_LOCAL
+        return [ o_id, o_d_id, o_w_id, o_c_id, o_ol_cnt, o_all_local, o_entry_d ]
     ## DEF
 
     ## ==============================================
@@ -329,6 +348,16 @@ class Loader:
         return [ s_i_id, s_w_id ] + \
                s_dists + \
                [ s_data ]
+    ## DEF
+
+    ## ==============================================
+    ## generateStockHistory
+    ## ==============================================
+    def generateStockHistory(self, s_w_id, s_i_id):
+        s_date = datetime.now()
+        s_quantity = rand.number(constants.MIN_QUANTITY, constants.MAX_QUANTITY)
+        
+        return [ s_i_id, s_w_id, s_date, s_quantity ]
     ## DEF
 
     ## ==============================================

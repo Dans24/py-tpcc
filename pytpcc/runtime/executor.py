@@ -65,7 +65,6 @@ class Executor:
             if debug: logging.debug("Executing '%s' transaction" % txn)
             try:
                 val = self.driver.executeTransaction(txn, params)
-                print(val)
             except KeyboardInterrupt:
                 return -1
             except (Exception, AssertionError) as ex:

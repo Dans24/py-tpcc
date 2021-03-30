@@ -109,6 +109,7 @@ TABLE_COLUMNS = {
         "o_w_id",  # SMALLINT
         "o_c_id",  # INTEGER
         "o_ol_cnt", # INTEGER
+        "o_all_local", # INTEGER
         "o_entry_d",  # TIMESTAMP
     ],
     constants.TABLENAME_ORDER_LINE: [
@@ -143,7 +144,21 @@ TABLE_COLUMNS = {
         "h_amount",  # FLOAT
         "h_data",  # VARCHAR
     ],
+    constants.TABLENAME_STOCK_HISTORY:  [
+        "sh_s_i_id", # INTEGER
+        "sh_s_w_id", # SMALLINT
+        "sh_date", # TIMESTAMP
+        "sh_quantity" # INTEGER
+    ],
+    constants.TABLENAME_CUSTOMER_HISTORY:  [
+        "ch_c_id", # INTEGER
+        "ch_c_d_id", # SMALLINT
+        "ch_c_w_id", # TIMESTAMP
+        "ch_date", # INTEGER
+        "ch_data" # VARCHAR
+    ]
 }
+
 TABLE_INDEXES = {
     constants.TABLENAME_ITEM: [
         "i_id",
@@ -173,254 +188,18 @@ TABLE_INDEXES = {
         [("dl_delivery_d", pymongo.ASCENDING), ("dl_w_id", pymongo.ASCENDING)],
 
         [("dl_w_id", pymongo.ASCENDING), ("delivery_orders.dlo_d_id", pymongo.ASCENDING), ("delivery_orders.dlo_o_id", pymongo.ASCENDING)]
-    ]
+    ],
+    constants.TABLENAME_STOCK_HISTORY:   [
+        [("sh_s_w_id", pymongo.ASCENDING), ("sh_s_i_id", pymongo.ASCENDING), ("sh_date", pymongo.DESCENDING)]
+    ],
+    constants.TABLENAME_CUSTOMER_HISTORY:   [
+        [("ch_c_w_id", pymongo.ASCENDING), ("ch_c_d_id", pymongo.ASCENDING), ("ch_c_id", pymongo.ASCENDING), ("ch_date", pymongo.DESCENDING)]
+    ],
 }
 
 DENORMALIZED_TABLES = {
     (constants.TABLENAME_ORDERS, 3): [constants.TABLENAME_ORDER_LINE],
     (constants.TABLENAME_DELIVERY, 2): [constants.TABLENAME_DELIVERY_ORDERS],
-}
-
-PIPELINES = {
-    "stock_quantity": ("stock",
-[
-  {
-    "$lookup": {
-      "from": "orders",
-      "localField": "s_i_id",
-      "foreignField": "order_line.ol_i_id",
-      "as": "orders"
-    }
-  },
-  {
-    "$unwind": {
-      "path": "$orders",
-      "preserveNullAndEmptyArrays": True
-    }
-  },
-  {
-    "$unwind": {
-      "path": "$orders.order_line",
-      "preserveNullAndEmptyArrays": True
-    }
-  },
-  {
-    "$project": {
-      "s_w_id": "$s_w_id",
-      "s_i_id": "$s_i_id",
-      "ol_quantity": {
-        "$cond": {
-          "if": {
-            "$and": [
-              { "$eq": ["$orders.order_line.ol_supply_w_id", "$s_w_id"] },
-              { "$eq": ["$orders.order_line.ol_i_id", "$s_i_id"] }
-            ]
-          },
-          "then": "$orders.order_line.ol_quantity",
-          "else": 0
-        }
-      }
-    }
-  },
-  {
-    "$group": {
-      "_id": ["$s_w_id", "$s_i_id"],
-      "total_quantity": {
-        "$sum": "$ol_quantity"
-      }
-    }
-  },
-  {
-    "$project": {
-      "s_quantity": {
-        "$add": [
-          {
-            "$mod": [
-              {
-                "$add": [
-                  {
-                    "$mod": [
-                      {
-                        "$subtract": [
-                          0,
-                          "$total_quantity"
-                        ]
-                      }, (constants.MAX_QUANTITY - constants.MIN_QUANTITY) + 1
-                    ]
-                  }, (constants.MAX_QUANTITY - constants.MIN_QUANTITY) + 1
-                ]
-              }, (constants.MAX_QUANTITY - constants.MIN_QUANTITY) + 1
-            ]
-          }, constants.MIN_QUANTITY
-        ]
-      }
-    }
-  }
-]),
-    "customer_total_amount": ("orders",
-[
-  {
-    "$lookup": {
-      "from": "delivery",
-      "let": {
-        "o_w_id": "$o_w_id",
-        "o_d_id": "$o_d_id",
-        "o_id": "$o_id"
-      },
-      "pipeline": [
-        {
-          "$match": {
-            "$expr": {
-              "$and": [
-                {
-                  "$eq": [
-                    "$dl_w_id",
-                    "$$o_w_id"
-                  ]
-                },
-                {
-                  "$in": [
-                    "$$o_d_id",
-                    "$delivery_orders.dlo_d_id"
-                  ]
-                },
-                {
-                  "$in": [
-                    "$$o_id",
-                    "$delivery_orders.dlo_o_id"
-                  ]
-                }
-              ]
-            }
-          }
-        }
-      ],
-      "as": "delivery"
-      }
-  },
-  {
-    "$match": {
-      "delivery": {
-        "$ne": []
-      }
-    }
-  },
-  {
-    "$unwind":"$order_line"
-  },
-  {
-    "$group":{
-      "_id":[
-        "$o_c_id",
-        "$o_w_id",
-        "$o_d_id",
-      ],
-      "c_total_amount":{
-        "$sum":"$order_line.ol_amount"
-      },
-    }
-  }
-]),
-    "customer_ytd": ("history",
-[
-  {
-    "$group":{
-      "_id":[
-        "$h_c_id",
-        "$h_c_w_id",
-        "$h_c_d_id",
-      ],
-      "c_ytd":{
-        "$sum":"$h_amount"
-      }
-    }
-  }
-]),
-    "customer_data": ("customer",
-[
-  {
-    "$lookup": {
-      "from": "history",
-      "let": {
-        "c_id": "$c_id",
-        "c_d_id": "$c_d_id",
-        "c_w_id": "$c_w_id"
-      },
-      "pipeline": [
-        {
-          "$match": {
-            "$expr": {
-              "$and": [
-                {
-                  "$eq": [
-                    "$h_c_id",
-                    "$$c_id"
-                  ]
-                },
-                {
-                  "$eq": [
-                    "$h_c_d_id",
-                    "$$c_d_id"
-                  ]
-                },
-                {
-                  "$eq": [
-                    "$h_c_w_id",
-                    "$$c_w_id"
-                  ]
-                }
-              ]
-            }
-          }
-        }
-      ],
-      "as": "history"
-      }
-  },
-  {
-    "$unwind":"$history"
-  },
-  {
-    "$group": {
-      "_id": [
-        "$c_id",
-        "$c_d_id",
-        "$c_w_id"
-      ],
-      "h_data": {
-        "$push": {
-          "$concat": [
-            { "$toString": "$history.h_c_id" }, " ",
-            { "$toString": "$history.h_c_d_id" }, " ",
-            { "$toString": "$history.h_c_w_id" }, " ",
-            { "$toString": "$history.h_d_id" }, " ",
-            { "$toString": "$history.h_w_id" }, " ",
-            { "$toString": "$history.h_amount" }
-          ]
-        }
-      },
-      "c_data": {
-        "$first": "$c_data"
-      }
-    }
-  },
-  {
-    "$project": {
-      "c_data": {
-        "$substr": [
-          {
-            "$reduce": {
-              "input": [],
-              "initialValue": "$c_data",
-              "in": {
-                "$concat": ["$$this", "|", "$$value"]
-              }
-            }
-          }, 0, 500]
-      }
-    }
-  }
-])
 }
 
 # ==============================================
@@ -551,25 +330,19 @@ class MongodbDriver(AbstractDriver):
         
             self.database[parentName].insert_many(tuple_dict)
         self.denormalized_values.clear()
-
-    def aggregate(self, pipeline, query = None, projection = None, one = False, before_pipe = [], after_pipe = []):
-        collection_name, pipeline = PIPELINES[pipeline]
-        agg = self.database[collection_name].aggregate(
-            ([{"$match": query}] if query else []) +
-            before_pipe +
-            pipeline +
-            after_pipe +
-            ([{"$project": projection}] if projection else []) +
-            ([{"$limit": 1}] if one else [])
-        )
-        if one:
-            return next(agg, None)
-        return agg
+    
+    def findTop(self, collection, filters, projection, sort, one = True):
+      if one:
+        return next(self.database[collection]
+                .find(filters, projection)
+                .sort(sort)
+                .limit(1))
+      else:
+        return self.database[collection].find(filters, projection).sort(sort)
 
     # ----------------------------------------------
     # doDelivery
     # ----------------------------------------------
-
     def doDelivery(self, params):
         w_id = params["w_id"]
         o_carrier_id = params["o_carrier_id"]
@@ -578,11 +351,9 @@ class MongodbDriver(AbstractDriver):
         result = []
         for d_id in range(1, constants.DISTRICTS_PER_WAREHOUSE+1):
             # getNewOrder
-            next_no_id = next(self.delivery
-                .find({"dl_w_id": w_id, "delivery_orders.dlo_d_id": d_id},
-                {"delivery_orders.dlo_o_id.$": 1 })
-                .sort([("delivery_orders.dlo_o_id", -1)])
-                .limit(1))["delivery_orders"][0]["dlo_o_id"] + 1 # MAX(dlo_o_id) + 1
+            next_no_id = self.findTop("delivery", {"dl_w_id": w_id, "delivery_orders.dlo_d_id": d_id},
+                {"delivery_orders.dlo_o_id.$": 1 },
+                [("delivery_orders.dlo_o_id", -1)])["delivery_orders"][0]["dlo_o_id"] + 1 # MAX(dlo_o_id) + 1
             no = self.orders.find_one(
                 {"o_d_id": d_id, "o_w_id": w_id, "o_id": next_no_id}, {"o_id": 1})
             if no == None:
@@ -617,6 +388,9 @@ class MongodbDriver(AbstractDriver):
         assert len(i_ids) == len(i_w_ids)
         assert len(i_ids) == len(i_qtys)
 
+        ## http://stackoverflow.com/q/3844931/
+        all_local = (not i_w_ids or [w_id] * len(i_w_ids) == i_w_ids)
+
         items = self.item.find({"i_id": {"$in": i_ids}}, {
                                "i_id": 1, "i_price": 1, "i_name": 1, "i_data": 1})
         items = list(items)
@@ -640,11 +414,8 @@ class MongodbDriver(AbstractDriver):
         d = self.district.find_one({"d_id": d_id, "d_w_id": w_id}, {"d_tax": 1})
         assert d
         d_tax = d["d_tax"]
-        d_next_o_id = next(self.orders
-            .find({"o_d_id": d_id, "o_w_id": w_id}, {"o_id": 1})
-            .sort([("o_id", -1)])
-            .limit(1)
-        )["o_id"] + 1 # MAX(o_id) + 1
+        d_next_o_id = findTop("orders", {"o_d_id": d_id, "o_w_id": w_id},
+            {"o_id": 1}, [("o_id", -1)])["o_id"] + 1 # MAX(o_id) + 1
 
         # getCustomer
         c = self.customer.find_one({"c_id": c_id, "c_d_id": d_id, "c_w_id": w_id}, {
@@ -653,22 +424,17 @@ class MongodbDriver(AbstractDriver):
         c_discount = c["c_discount"]
 
         # createNewOrder
+        ol_cnt = len(i_ids)
         o = {
             "o_id": d_next_o_id,
             "o_d_id": d_id,
             "o_w_id": w_id,
             "o_c_id": c_id,
-            "o_ol_cnt": len(i_ids),
+            "o_ol_cnt": ol_cnt,
+            "o_all_local": all_local,
             "o_entry_d": o_entry_d,
             constants.TABLENAME_ORDER_LINE: []
         }
-
-        # ----------------
-        # OPTIMIZATION:
-        # If all of the items are at the same warehouse, then we'll issue a single
-        # request to get their information
-        # ----------------
-        ol_cnt = len(i_ids)
 
         # ----------------
         # Insert Order Item Information
@@ -687,19 +453,33 @@ class MongodbDriver(AbstractDriver):
             i_price = itemInfo["i_price"]
 
             # getStockInfo
-            si = self.stock.find_one({"s_i_id": ol_i_id, "s_w_id": w_id}, {
+            si = self.stock.find_one({"s_i_id": ol_i_id, "s_w_id": ol_supply_w_id}, {
                                          "s_i_id": 1, "s_data": 1, s_dist_col: 1})
             
-            ss = self.aggregate("stock_quantity", {"s_i_id": ol_i_id, "s_w_id": w_id}, {
-                            "s_quantity": 1}, True)
+            sh = self.findTop("stock_history", {"sh_s_i_id": ol_i_id, "s_w_id": ol_supply_w_id},
+              {"sh_date": 1, "sh_quantity": 1}, {"sh_date": -1})
+
             assert si, "Failed to find s_i_id: %d\n%s" % (
                 ol_i_id, pformat(itemInfo))
-            assert ss
+            assert sh
 
-            s_quantity = ss["s_quantity"]
+            s_quantity = sh["sh_quantity"]
             s_data = si["s_data"]
             # Fetches data from the s_dist_[d_id] column
             s_dist_xx = si[s_dist_col]
+
+            ## Update stock
+            if s_quantity >= ol_quantity + 10:
+                s_quantity = s_quantity - ol_quantity
+            else:
+                s_quantity = s_quantity + 91 - ol_quantity
+            
+            self.stock_history.insert({
+              "sh_s_i_id": ol_i_id,
+              "sh_s_w_id": ol_supply_w_id,
+              "sh_date": o_entry_d,
+              "sh_quantity": s_quantity
+            })
 
             if i_data.find(constants.ORIGINAL_STRING) != -1 and s_data.find(constants.ORIGINAL_STRING) != -1:
                 brand_generic = 'B'
@@ -768,22 +548,64 @@ class MongodbDriver(AbstractDriver):
             c_id = c["c_id"]
         assert len(c) > 0
         assert c_id != None
-        c_total_amount_result = self.aggregate("customer_total_amount", {"o_c_id": c_id, "o_d_id": d_id, "o_w_id": w_id}, {
-                            "c_total_amount": 1}, True)
-        c_total_amount = c_total_amount_result["c_total_amount"] if c_total_amount_result else 0
-        c_ytd_result = self.aggregate("customer_ytd", {"h_c_id": c_id, "h_c_d_id": d_id, "h_c_w_id": w_id}, {
-                            "c_ytd": 1}, True)
-        c_ytd = c_ytd_result["c_ytd"] if c_ytd_result else 0
-        c["c_balance"] = c_total_amount - c_ytd
+        last_delivery_o_id = self.findTop("delivery", {"delivery_orders.dlo_d_id": d_id, "dl_w_id": w_id},
+            {"delivery_orders.dlo_o_id.$": 1}, [("delivery_orders.dlo_o_id", -1)])["delivery_orders"][0]["dlo_o_id"]
+        
+        c_total_amount = next(self.orders.aggregate([
+          {
+            "$match": {
+              "o_c_id": c_id,
+              "o_d_id": d_id,
+              "o_w_id": w_id,
+              "o_id": {
+                "$lte": last_delivery_o_id
+              }
+            }
+          },
+          {
+            "$unwind": "$order_line"
+          },
+          {
+            "$group": {
+              "_id": None,
+              "c_total_amount": {
+                "$sum": "$ol_amount",
+              },
+            }
+          }
+        ]), {"c_total_amount": 0})["c_total_amount"]
 
-        orderLines = []
+        c_ytd_payment = next(self.history.aggregate(
+          [
+            {
+              "$match": {
+                "h_c_id": c_id,
+                "h_c_d_id": d_id,
+                "h_c_w_id": w_id,
+              }
+            },
+            {
+              "$group":{
+                "_id":[
+                  "$h_c_id",
+                  "$h_c_w_id",
+                  "$h_c_d_id",
+                ],
+                "c_ytd_payment":{
+                  "$sum":"$h_amount"
+                }
+              }
+            }
+          ]), {"c_ytd_payment": 0})["c_ytd_payment"]
+
+        c["c_balance"] = c_total_amount - c_ytd_payment
+
+        orderLines = [ ]
         order = None
 
         # getLastOrder
-        order = next(self.orders
-                .find({"o_w_id": w_id, "o_d_id": d_id})
-                .sort([("o_id", -1)])
-                .limit(1), None)
+        order = self.findTop("orders", {"o_w_id": w_id, "o_d_id": d_id}, None, [("o_id", -1)])
+
         # getOrderLines
         if order:
             o_id = order["o_id"]
@@ -835,11 +657,24 @@ class MongodbDriver(AbstractDriver):
         assert c_id != None
 
         c_credit = c["c_credit"]
+        c_data = self.findTop("customer_history",
+          {"ch_c_id": c_id, "ch_c_d_id": c_d_id, "ch_c_w_id": c_w_id},
+          {"ch_date": 1, "ch_data": 1},
+          [("ch_date", -1)], True
+        )["ch_data"]
 
         if c_credit == constants.BAD_CREDIT:
-            c["c_data"] = self.aggregate("customer_data",
-                                    {"c_id": c_id, "c_w_id": c_w_id, "c_d_id": c_d_id},
-                                    {"c_data": 1}, True)["c_data"]
+            newData = " ".join(map(str, [c_id, c_d_id, c_w_id, d_id, w_id, h_amount]))
+            c_data = (newData + "|" + c_data)
+            if len(c_data) > constants.MAX_C_DATA: c_data = c_data[:constants.MAX_C_DATA]
+            self.customer_history.insert({
+              "ch_c_id": c_id,
+              "ch_c_d_id": c_d_id,
+              "ch_c_w_id": c_w_id,
+              "ch_date": h_date,
+              "ch_data": c_data
+            })
+            c["c_data"] = c_data
         else:
             c["c_data"] = ""
 
@@ -903,23 +738,43 @@ class MongodbDriver(AbstractDriver):
         for ol in orderLines:
             ol_ids.add(ol["ol_i_id"])
         # FOR
-        result = self.aggregate("stock_quantity", {
-                    "s_w_id": w_id, "s_i_id": {"$in": list(ol_ids)}},
-                    {"count": 1}, True, after_pipe=[
-                        {
-                            "$match": {
-                                "$expr": {
-                                    "$lt": [
-                                        "$s_quantity",
-                                        threshold
-                                    ]
-                                }
-                            }
-                        },
-                        {
-                            "$count": "count"
-                        }
-                    ])
-        return int(result["count"]) if result else 0
+        return next(self.stock_history.aggregate(
+          [
+            {
+              "$match": {
+                "sh_s_w_id": w_id,
+                "sh_s_i_id": {
+                  "$in": list(ol_ids)
+                }
+              }
+            },
+            {
+              "$sort": {
+                "sh_date": -1
+              }
+            },
+            {
+              "$group": {
+                "_id": ["$sh_s_w_id", "$sh_s_i_id"],
+                "s_quantity": {
+                  "$first": "$sh_quantity"
+                }
+              }
+            },
+            {
+              "$match": {
+                  "$expr": {
+                      "$lt": [
+                          "$sh_quantity",
+                          threshold
+                      ]
+                  }
+              }
+            },
+            {
+                "$count": "count"
+            }
+          ]))["count"]
+        
 
 # CLASS

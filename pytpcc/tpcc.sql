@@ -223,7 +223,7 @@ CREATE VIEW "stock_view" AS (
       ol_supply_w_id AS s_w_id,
       SUM(ol_amount) AS s_ytd,
       COUNT(*) AS s_order_cnt,
-      COUNT(NULLIF(ol_supply_w_id, ol_w_id)) AS s_remote_cnt,
+      COUNT(NULLIF(ol_supply_w_id, ol_w_id)) AS s_remote_cnt
     FROM order_line
     GROUP BY ol_i_id, ol_supply_w_id
   )

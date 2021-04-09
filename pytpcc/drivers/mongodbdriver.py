@@ -178,16 +178,22 @@ TABLE_INDEXES = {
     constants.TABLENAME_ORDERS:   [
         [("o_w_id", pymongo.ASCENDING), ("o_d_id",
                                          pymongo.ASCENDING), ("o_id", pymongo.ASCENDING)],
+    ],
+    constants.TABLENAME_ORDER_LINE: [
+        [("ol_w_id", pymongo.ASCENDING), ("ol_d_id", pymongo.ASCENDING)
+        ("ol_id", pymongo.ASCENDING), ("ol_number", pymongo.ASCENDING)],
 
-        [("order_line.ol_i_id", pymongo.ASCENDING), ("order_line.ol_supply_w_id", pymongo.ASCENDING)],
+        [("ol_i_id", pymongo.ASCENDING), ("ol_supply_w_id", pymongo.ASCENDING)]
     ],
     constants.TABLENAME_STOCK:      [
         [("s_w_id", pymongo.ASCENDING), ("s_i_id", pymongo.ASCENDING)]
     ],
     constants.TABLENAME_DELIVERY:   [
         [("dl_delivery_d", pymongo.ASCENDING), ("dl_w_id", pymongo.ASCENDING)],
-
-        [("dl_w_id", pymongo.ASCENDING), ("delivery_orders.dlo_d_id", pymongo.ASCENDING), ("delivery_orders.dlo_o_id", pymongo.ASCENDING)]
+    ],
+    constants.TABLENAME_DELIVERY_ORDERS:    [
+        [("dlo_delivery_d", pymongo.ASCENDING), ("dlo_w_id", pymongo.ASCENDING), ("dlo_d_id", pymongo.ASCENDING), ("dlo_o_id", pymongo.ASCENDING)],
+        [("dlo_w_id", pymongo.ASCENDING), ("dlo_d_id", pymongo.ASCENDING), ("dlo_o_id", pymongo.ASCENDING)]
     ],
     constants.TABLENAME_STOCK_HISTORY:   [
         [("sh_s_w_id", pymongo.ASCENDING), ("sh_s_i_id", pymongo.ASCENDING), ("sh_date", pymongo.DESCENDING)]
@@ -195,11 +201,6 @@ TABLE_INDEXES = {
     constants.TABLENAME_CUSTOMER_HISTORY:   [
         [("ch_c_w_id", pymongo.ASCENDING), ("ch_c_d_id", pymongo.ASCENDING), ("ch_c_id", pymongo.ASCENDING), ("ch_date", pymongo.DESCENDING)]
     ],
-}
-
-DENORMALIZED_TABLES = {
-    (constants.TABLENAME_ORDERS, 3): [constants.TABLENAME_ORDER_LINE],
-    (constants.TABLENAME_DELIVERY, 2): [constants.TABLENAME_DELIVERY_ORDERS],
 }
 
 # ==============================================
@@ -252,9 +253,6 @@ class MongodbDriver(AbstractDriver):
         load_indexes = ('execute' in config and not config['execute']) and \
                        ('load' in config and not config['load'])
         for name in constants.ALL_TABLES:
-            if name in DENORMALIZED_TABLES.keys():
-                continue
-
             # Create member mapping to collections
             self.__dict__[name] = self.database[name]
 
@@ -280,34 +278,11 @@ class MongodbDriver(AbstractDriver):
 
         tuple_dicts = []
 
-        if tableName in sum(DENORMALIZED_TABLES.values(), []):
-            parentTable, splitIdx = next(
-                k for k, v in DENORMALIZED_TABLES.items() if tableName in v)
-            parentDict = self.denormalized_values[parentTable]
-            for t in tuples:
-                key = tuple(t[:splitIdx])
-                value = t[splitIdx:]
-                values = parentDict[key].get(tableName, [])
-                values.append(
-                    dict(map(lambda i: (columns[i], t[i]), num_columns[splitIdx:])))
-                parentDict[key][tableName] = values
-            # FOR
-
-        elif tableName in map(lambda t: t[0], DENORMALIZED_TABLES.keys()):
-            splitIdx = next(
-                i for t, i in DENORMALIZED_TABLES.keys() if t == tableName)
-            self.denormalized_values[tableName] = self.denormalized_values.get(tableName, {})
-            for t in tuples:
-                key = tuple(t[:splitIdx])
-                self.denormalized_values[tableName][key] = dict(
-                    map(lambda i: (columns[i], t[i]), num_columns))
-        # Otherwise just shove the tuples straight to the target collection
-        else:
-            for t in tuples:
-                tuple_dicts.append(
-                    dict(map(lambda i: (columns[i], t[i]), num_columns)))
-            # FOR
-            self.database[tableName].insert(tuple_dicts)
+        for t in tuples:
+            tuple_dicts.append(
+                dict(map(lambda i: (columns[i], t[i]), num_columns)))
+        # FOR
+        self.database[tableName].insert(tuple_dicts)
         # IF
 
         return
@@ -322,14 +297,7 @@ class MongodbDriver(AbstractDriver):
     # loadFinish
     # ----------------------------------------------
     def loadFinish(self):
-        for parentName, _ in DENORMALIZED_TABLES.keys():
-            tuple_dict = self.denormalized_values[parentName].values()
-
-            logging.debug("Pushing %d denormalized %s records into MongoDB" % (
-                len(tuple_dict), parentName))
-        
-            self.database[parentName].insert_many(tuple_dict)
-        self.denormalized_values.clear()
+        pass
     
     def findTop(self, collection, filters, projection, sort, one = True):
       if one:
@@ -351,9 +319,9 @@ class MongodbDriver(AbstractDriver):
         result = []
         for d_id in range(1, constants.DISTRICTS_PER_WAREHOUSE+1):
             # getNewOrder
-            next_no_id = self.findTop("delivery", {"dl_w_id": w_id, "delivery_orders.dlo_d_id": d_id},
-                {"delivery_orders.dlo_o_id.$": 1 },
-                [("delivery_orders.dlo_o_id", -1)])["delivery_orders"][0]["dlo_o_id"] + 1 # MAX(dlo_o_id) + 1
+            next_no_id = self.findTop("delivery_orders", {"dlo_w_id": w_id, "dlo_d_id": d_id},
+                {"dlo_o_id": 1 },
+                [("dlo_o_id", -1)])["dlo_o_id"] + 1 # MAX(dlo_o_id) + 1
             no = self.orders.find_one(
                 {"o_d_id": d_id, "o_w_id": w_id, "o_id": next_no_id}, {"o_id": 1})
             if no == None:
@@ -366,9 +334,9 @@ class MongodbDriver(AbstractDriver):
         # FOR
         self.delivery.insert({
             "dl_delivery_d": ol_delivery_d,
-            "dl_w_id": w_id,
-            "delivery_orders": [{"dlo_d_id": d_id, "dlo_o_id": o_id} for d_id, o_id in result]
+            "dl_w_id": w_id
         })
+        self.delivery_orders.insert([{"dlo_d_id": d_id, "dlo_o_id": o_id} for d_id, o_id in result])
         return result
 
     # ----------------------------------------------
@@ -414,7 +382,7 @@ class MongodbDriver(AbstractDriver):
         d = self.district.find_one({"d_id": d_id, "d_w_id": w_id}, {"d_tax": 1})
         assert d
         d_tax = d["d_tax"]
-        d_next_o_id = findTop("orders", {"o_d_id": d_id, "o_w_id": w_id},
+        d_next_o_id = self.findTop("orders", {"o_d_id": d_id, "o_w_id": w_id},
             {"o_id": 1}, [("o_id", -1)])["o_id"] + 1 # MAX(o_id) + 1
 
         # getCustomer
@@ -432,15 +400,17 @@ class MongodbDriver(AbstractDriver):
             "o_c_id": c_id,
             "o_ol_cnt": ol_cnt,
             "o_all_local": all_local,
-            "o_entry_d": o_entry_d,
-            constants.TABLENAME_ORDER_LINE: []
+            "o_entry_d": o_entry_d
         }
+
+        self.orders.insert(o)
 
         # ----------------
         # Insert Order Item Information
         # ----------------
         item_data = []
         total = 0
+        order_lines = []
         for i in range(ol_cnt):
             ol_number = i + 1
             ol_supply_w_id = i_w_ids[i]
@@ -456,8 +426,8 @@ class MongodbDriver(AbstractDriver):
             si = self.stock.find_one({"s_i_id": ol_i_id, "s_w_id": ol_supply_w_id}, {
                                          "s_i_id": 1, "s_data": 1, s_dist_col: 1})
             
-            sh = self.findTop("stock_history", {"sh_s_i_id": ol_i_id, "s_w_id": ol_supply_w_id},
-              {"sh_date": 1, "sh_quantity": 1}, {"sh_date": -1})
+            sh = self.findTop("stock_history", {"sh_s_i_id": ol_i_id, "sh_s_w_id": ol_supply_w_id},
+              {"sh_quantity": 1}, [("sh_date", -1)])
 
             assert si, "Failed to find s_i_id: %d\n%s" % (
                 ol_i_id, pformat(itemInfo))
@@ -494,14 +464,15 @@ class MongodbDriver(AbstractDriver):
 
             
             
-            o[constants.TABLENAME_ORDER_LINE].append(ol)
+            order_lines.append(ol)
 
             # Add the info to be returned
             item_data.append(
                 (i_name, s_quantity, brand_generic, i_price, ol_amount))
         # FOR
 
-        self.orders.insert(o)
+        self.order_line.insert(order_lines)
+
         # Adjust the total for the discount
         # print "c_discount:", c_discount, type(c_discount)
         # print "w_tax:", w_tax, type(w_tax)
@@ -548,22 +519,19 @@ class MongodbDriver(AbstractDriver):
             c_id = c["c_id"]
         assert len(c) > 0
         assert c_id != None
-        last_delivery_o_id = self.findTop("delivery", {"delivery_orders.dlo_d_id": d_id, "dl_w_id": w_id},
-            {"delivery_orders.dlo_o_id.$": 1}, [("delivery_orders.dlo_o_id", -1)])["delivery_orders"][0]["dlo_o_id"]
+        last_delivery_o_id = self.findTop("delivery_orders", {"dlo_d_id": d_id, "dlo_w_id": w_id},
+            {"dlo_o_id": 1}, [("dlo_o_id", -1)])["dlo_o_id"]
         
-        c_total_amount = next(self.orders.aggregate([
+        c_total_amount = next(self.order_line.aggregate([
           {
             "$match": {
-              "o_c_id": c_id,
-              "o_d_id": d_id,
-              "o_w_id": w_id,
-              "o_id": {
+              "ol_c_id": c_id,
+              "ol_d_id": d_id,
+              "ol_w_id": w_id,
+              "ol_o_id": {
                 "$lte": last_delivery_o_id
               }
             }
-          },
-          {
-            "$unwind": "$order_line"
           },
           {
             "$group": {
@@ -604,16 +572,25 @@ class MongodbDriver(AbstractDriver):
         order = None
 
         # getLastOrder
-        order = self.findTop("orders", {"o_w_id": w_id, "o_d_id": d_id}, None, [("o_id", -1)])
+        order = self.findTop("orders", {"o_w_id": w_id, "o_d_id": d_id},
+            {"o_id": 1, "o_carrier_id": 1, "o_entry_d": 1}, [("o_id", -1)])
 
         # getOrderLines
         if order:
             o_id = order["o_id"]
-            delivery = self.delivery.find_one(
-                {"dl_w_id": w_id, "delivery_orders.dlo_o_id": o_id, "delivery_orders.dlo_d_id": d_id},
-                {"dl_carrier_id": 1})
-            order["o_carrier_id"] = delivery["dl_carrier_id"] if delivery else None
-            orderLines = order[constants.TABLENAME_ORDER_LINE]
+            delivery_order = self.delivery_orders.find_one(
+                {"dlo_w_id": w_id, "dlo_o_id": o_id, "dlo_d_id": d_id},
+                {"dlo_delivery_d": 1})
+            if delivery_order:
+                delivery_d = self.delivery_orders.find_one(
+                    {"dlo_w_id": w_id, "dlo_o_id": o_id, "dlo_d_id": d_id},
+                    {"dlo_delivery_d": 1})["dlo_delivery_d"]
+                delivery = self.delivery.find_one(
+                    {"dl_w_id": w_id, "dl_delivery_d": delivery_d},
+                    {"dl_carrier_id": 1})
+                order["o_carrier_id"] = delivery["dl_carrier_id"]
+            orderLines = self.order_line.find({"ol_o_id": o_id, "ol_w_id": w_id, "ol_d_id": d_id},
+                {"ol_supply_w_id": 1, "ol_i_id": 1, "ol_quantity": 1, "ol_amount": 1, "ol_delivery_d": 1})
         else:
             orderLines = [ ]
 
@@ -659,8 +636,8 @@ class MongodbDriver(AbstractDriver):
         c_credit = c["c_credit"]
         c_data = self.findTop("customer_history",
           {"ch_c_id": c_id, "ch_c_d_id": c_d_id, "ch_c_w_id": c_w_id},
-          {"ch_date": 1, "ch_data": 1},
-          [("ch_date", -1)], True
+          {"ch_data": 1},
+          [("ch_date", -1)]
         )["ch_data"]
 
         if c_credit == constants.BAD_CREDIT:
@@ -725,13 +702,8 @@ class MongodbDriver(AbstractDriver):
         # getStockCount
         # Outer Table: ORDER_LINE
         # Inner Table: STOCK
-        o = self.orders.find({"o_w_id": w_id, "o_d_id": d_id, "o_id": {
-                                "$lt": o_id, "$gte": o_id-20}}, {"order_line.ol_i_id": 1})
-        assert o
-        orderLines = []
-        for ol in o:
-            orderLines.extend(ol["order_line"])
-        # FOR
+        orderLines = self.order_line.find({"ol_w_id": w_id, "ol_d_id": d_id, "ol_o_id": {
+                                "$lt": o_id, "$gte": o_id-20}}, {"ol_i_id": 1})
 
         assert orderLines
         ol_ids = set()
@@ -763,18 +735,18 @@ class MongodbDriver(AbstractDriver):
             },
             {
               "$match": {
-                  "$expr": {
-                      "$lt": [
-                          "$sh_quantity",
-                          threshold
-                      ]
-                  }
+                "$expr": {
+                  "$lt": [
+                    "$s_quantity",
+                    threshold
+                  ]
+                }
               }
             },
             {
-                "$count": "count"
+              "$count": "count"
             }
-          ]))["count"]
+          ]), {"count": 0})["count"]
         
 
 # CLASS
